@@ -46,6 +46,12 @@ Simulation state
   sim.detector.half_extent     world-space half-width mapped to the detector's pixel grid
   sim.rng                      shared numpy.random.Generator
 
+Wavelengths (spectra.py)
+  spectra.monochrome(nm), spectra.blackbody(temperature_k)
+                                Spectrum factories: spectrum(n, rng) -> wavelengths_nm.
+                                Reassign the whole population directly, e.g.:
+                                  sim.state.wavelengths[:] = spectra.blackbody(3000.0)(sim.state.n, sim.rng)
+
 Call sim_help() to print this again.
 """
 

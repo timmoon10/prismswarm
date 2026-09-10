@@ -7,7 +7,7 @@ import argparse
 
 import numpy as np
 
-from . import fields, render, repl
+from . import fields, render, repl, spectra
 from .detector import Detector
 from .simulation import Simulation
 from .state import ParticleState
@@ -20,7 +20,13 @@ def build_argparser() -> argparse.ArgumentParser:
     parser.add_argument("--display-size", type=int, default=900, help="display window size (square, px)")
     parser.add_argument("--fps", type=int, default=30, help="target frame rate")
     parser.add_argument("--seed", type=int, default=0)
-    parser.add_argument("--wavelength", type=float, default=530.0, help="initial emission wavelength, nm")
+    parser.add_argument(
+        "--spectrum", choices=["blackbody", "mono"], default="blackbody", help="initial emission spectrum"
+    )
+    parser.add_argument(
+        "--temperature", type=float, default=5778.0, help="blackbody temperature, K (--spectrum blackbody)"
+    )
+    parser.add_argument("--wavelength", type=float, default=530.0, help="emission wavelength, nm (--spectrum mono)")
     parser.add_argument("--exposure", type=float, default=1.0)
     return parser
 
@@ -29,9 +35,12 @@ def main(argv: list[str] | None = None) -> None:
     args = build_argparser().parse_args(argv)
     rng = np.random.default_rng(args.seed)
 
-    particles = ParticleState.uniform_ball(
-        n=args.num_particles, rng=rng, dim=3, radius=1.0, wavelength_nm=args.wavelength
-    )
+    if args.spectrum == "blackbody":
+        spectrum = spectra.blackbody(args.temperature)
+    else:
+        spectrum = spectra.monochrome(args.wavelength)
+
+    particles = ParticleState.uniform_ball(n=args.num_particles, rng=rng, spectrum=spectrum, dim=3, radius=1.0)
 
     field_catalog = {
         "radial": fields.radial_inward(speed=0.3),
@@ -48,7 +57,7 @@ def main(argv: list[str] | None = None) -> None:
         exposure=args.exposure,
     )
 
-    repl.start(namespace=dict(sim=sim, fields=fields, np=np))
+    repl.start(namespace=dict(sim=sim, fields=fields, spectra=spectra, np=np))
 
     render.run(sim, display_size=(args.display_size, args.display_size), target_fps=args.fps)
 

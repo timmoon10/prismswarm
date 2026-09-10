@@ -98,8 +98,13 @@ Proposed module layout:
 
 - `prismswarm/fields.py` — velocity field interface, initial
   implementations (radial-inward, Brownian), composition helper.
+- `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
+  `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
+  particle initialization. Implementations: monochrome, blackbody
+  (Planck's law, inverse-transform sampled).
 - `prismswarm/state.py` — particle state container (positions, velocities,
-  wavelengths as NumPy float32 arrays) and the integration step.
+  wavelengths as NumPy float32 arrays; wavelengths are drawn from a
+  `Spectrum` at construction) and the integration step.
 - `prismswarm/color.py` — wavelength→XYZ (an analytic multi-Gaussian fit
   to the CIE 1931 color-matching functions, not a tabulated lookup),
   XYZ→sRGB conversion, gamut handling, tonemapping.
@@ -156,27 +161,44 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
 - pygame display window, real-time loop at ~1M particles
 - Terminal REPL for live control, with a `sim_help()` usage guide
 
-**M2 — Field catalog & composition**
+**M2 — Color & wavelength-coupled dynamics (current target)**
+
+Reordered ahead of the field catalog: color dynamics are expected to carry
+more of the piece's visual interest than particle motion, so it's worth
+settling this before scaling out M3. Also where wavelength-dependent field
+coupling — previously a "not scheduled" extension — moved to, since it's
+naturally part of the same question (how wavelength does and doesn't
+influence the rest of the system).
+
+- Static emission spectra at initialization: monochrome (done), blackbody
+  (done — defaults to the sun's ~5778K effective temperature, restricted
+  to the visible range); white and discrete-RGB catalog entries later
+- Wavelength-dependent velocity field coupling — design pending
+  confirmation; see `fields.py`'s docstring once implemented for the
+  settled interface
+- Explicitly deferred within this milestone: dynamic per-particle spectra
+  (random walks, explicit spectral conversion) — a later milestone once
+  static spectra and field coupling are both working
+
+**M3 — Field catalog & composition**
 - Perlin noise, rectilinear, sinusoidal, stereographic projections of Hopf
   fibers, exponentially-growing confining fields
 - Exercise field composition (addition) now that multiple fields exist
 - Discretization correction for the radial field to prevent outward
   spiraling
 
-**M3 — Color catalog & wavelength dynamics**
-- Color distributions: white, blackbody, discrete RGB, monochrome
+**M4 — Dynamic spectra**
 - Per-particle wavelength random walks; explore convergence to target
-  spectra (e.g. a uniform visible-spectrum distribution via
-  Brownian motion confined to the visible range)
+  spectra (e.g. a uniform visible-spectrum distribution via Brownian
+  motion confined to the visible range)
+- Explicit spectral conversion between distributions
 
-**M4 — Performance scaling**
-- Profile M1–M3 at 1M+ particles; introduce Numba JIT on the
+**M5 — Performance scaling**
+- Profile M1–M4 at 1M+ particles; introduce Numba JIT on the
   integration/splat hot path if needed
 - pybind11 native extension as a fallback if Numba proves insufficient
 
 **Future extensions (not scheduled)**
-- Wavelength-dependent field coupling (a particle's emitted wavelength
-  affects its response to a field)
 - Higher-dimensional particle space (4D/8D projected down to R^2)
 - Pinhole camera projection with distance-based brightness falloff
   (`d^(1-n)` is natural for a pinhole model; the orthographic falloff law,
