@@ -18,19 +18,12 @@ def run(sim: Simulation, display_size: tuple[int, int] = (900, 900), target_fps:
     screen = pygame.display.set_mode(display_size)
     clock = pygame.time.Clock()
 
-    field_keys = list(sim.fields.keys())
-
     while sim.running:
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 sim.running = False
-            elif event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE:
-                    sim.running = False
-                elif pygame.K_1 <= event.key <= pygame.K_9:
-                    index = event.key - pygame.K_1
-                    if index < len(field_keys):
-                        sim.active_field_name = field_keys[index]
+            elif event.type == pygame.KEYDOWN and event.key == pygame.K_ESCAPE:
+                sim.running = False
 
         sim.step()
 
@@ -39,7 +32,12 @@ def run(sim: Simulation, display_size: tuple[int, int] = (900, 900), target_fps:
         xyz = color.wavelength_to_xyz(sim.state.wavelengths)
         sim.detector.splat(xy, xyz)
 
-        rgb = color.tonemap(sim.detector.buffer, exposure=sim.exposure)
+        rgb = color.tonemap(
+            sim.detector.buffer,
+            exposure=sim.exposure,
+            adaptive=sim.adaptive_exposure,
+            percentile=sim.adaptive_percentile,
+        )
         # surfarray expects (width, height, 3); the detector buffer is (row, col, 3) = (height, width, 3).
         surface = pygame.surfarray.make_surface(np.transpose(rgb, (1, 0, 2)))
         if surface.get_size() != display_size:

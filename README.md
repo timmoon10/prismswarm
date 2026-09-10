@@ -82,10 +82,15 @@ presentation-layer concern.
 4. Out-of-gamut handling: monochromatic spectral-locus colors fall outside
    the sRGB gamut, producing negative components. Policy (clip vs.
    desaturate toward white) is an open question — see below.
-5. Exposure normalization / tonemapping (particle density varies hugely
-   across a frame and across scenes), then the sRGB OETF (gamma) for the
-   final display buffer, which may sit at a different resolution than the
-   detector.
+5. Exposure normalization / tonemapping, then the sRGB OETF (gamma) for
+   the final display buffer, which may sit at a different resolution than
+   the detector. Particle density varies hugely across a frame and across
+   scenes, so normalization defaults to adaptive: a percentile of the
+   detector's brightest nonzero linear-sRGB channel values (default the
+   100th, i.e. the single brightest pixel channel) is scaled to hit full
+   brightness each frame. A manual `exposure` gain is always applied on
+   top of that, so the two aren't alternatives — adaptive picks a
+   reasonable per-frame baseline, manual pushes from there.
 
 ## Software architecture
 
@@ -102,17 +107,22 @@ Proposed module layout:
   splatting (bincount-based accumulation).
 - `prismswarm/simulation.py` — the mutable `Simulation` object shared
   between the render loop and the REPL: particle state, detector, the
-  field catalog and which one is active, `dt`/`exposure`/`t`. Plain
+  field catalog and which one is active, `dt`, and the exposure knobs
+  (`exposure`, `adaptive_exposure`, `adaptive_percentile`). Plain
   attributes, no locking — each read/write is a single, GIL-atomic
   reference assignment, and the render loop reads a consistent snapshot
   once per frame.
 - `prismswarm/render.py` — pygame window, detector→display resize/blit,
-  the main render loop.
+  the main render loop. The only input it handles is window close /
+  `Esc`; everything else is REPL-only (no ad hoc keyboard shortcuts for
+  simulation parameters — those don't scale past a couple of options and
+  the REPL already covers it).
 - `prismswarm/repl.py` — the control REPL: an `IPython.terminal.embed`
   shell (a plain terminal REPL, not a notebook or kernel) running on a
   background thread, with a live reference to the `Simulation` object for
-  interactive editing while the sim runs. Skips itself if stdin isn't a
-  real terminal, rather than spinning on repeated EOF.
+  interactive editing while the sim runs. Owns the REPL's usage guidance
+  (banner + `sim_help()`) — skips starting itself if stdin isn't a real
+  terminal, rather than spinning on repeated EOF.
 - `prismswarm/main.py` — entry point wiring the above together and holding
   the initial scene setup.
 
@@ -135,16 +145,16 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
 
 ## Roadmap
 
-**M1 — Core loop (current target)**
+**M1 — Core loop (done)**
 - Particle state in R^3, Euler integration
 - Radial-inward and Brownian fields, independently selectable at runtime
   (not summed yet)
 - Orthographic projection; detector buffer decoupled from display
   resolution
-- CIE XYZ→sRGB pipeline with basic gamut clipping and exposure
-  normalization
+- CIE XYZ→sRGB pipeline with gamut clipping and manual + adaptive
+  exposure normalization
 - pygame display window, real-time loop at ~1M particles
-- Terminal REPL for live control (swap active field, tweak parameters)
+- Terminal REPL for live control, with a `sim_help()` usage guide
 
 **M2 — Field catalog & composition**
 - Perlin noise, rectilinear, sinusoidal, stereographic projections of Hopf
@@ -183,6 +193,3 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
 
 - Gamut-mapping policy for out-of-gamut spectral colors (clip vs.
   desaturate) — likely needs visual experimentation to settle.
-- Exposure/normalization strategy for the detector buffer (fixed vs.
-  adaptive/auto-exposure) as particle density varies across a frame and
-  across scenes.

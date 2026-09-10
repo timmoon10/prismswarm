@@ -48,16 +48,7 @@ def main(argv: list[str] | None = None) -> None:
         exposure=args.exposure,
     )
 
-    repl.start(
-        namespace=dict(sim=sim, fields=fields, np=np),
-        banner=(
-            "prismswarm REPL — the sim is running in another thread; press 1/2 in the\n"
-            "window or edit `sim.*` here to control it live.\n"
-            "  sim.active_field_name = 'brownian'\n"
-            "  sim.exposure = 2.0\n"
-            "  sim.fields['radial'] = fields.radial_inward(speed=0.6)\n"
-        ),
-    )
+    repl.start(namespace=dict(sim=sim, fields=fields, np=np))
 
     render.run(sim, display_size=(args.display_size, args.display_size), target_fps=args.fps)
 

@@ -57,7 +57,12 @@ def _linear_to_srgb(c: np.ndarray) -> np.ndarray:
     return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
 
 
-def tonemap(xyz_buffer: np.ndarray, exposure: float = 1.0) -> np.ndarray:
+def tonemap(
+    xyz_buffer: np.ndarray,
+    exposure: float = 1.0,
+    adaptive: bool = False,
+    percentile: float = 100.0,
+) -> np.ndarray:
     """Detector XYZ accumulation buffer -> displayable uint8 sRGB.
 
     Gamut handling is the simplest possible policy: negative linear-sRGB
@@ -66,8 +71,26 @@ def tonemap(xyz_buffer: np.ndarray, exposure: float = 1.0) -> np.ndarray:
     the README's open design questions — chosen because it's cheap and
     doesn't hide the pipeline's correctness while more interesting policies
     are explored later.
+
+    When ``adaptive`` is set, brightness is normalized per frame: the
+    ``percentile`` (of nonzero, gamut-clipped linear channel values —
+    zeros from empty background pixels would otherwise swamp anything
+    below roughly the image's fill fraction) is scaled to hit full
+    brightness. ``percentile=100`` is a literal "brightest pixel channel
+    maps to white"; a lower value (e.g. 99.5) trades a few blown-out
+    outlier pixels for a brighter overall image. ``exposure`` is always
+    applied too, as a manual gain on top of whatever normalization (or
+    lack of it) precedes it — the two combine rather than being
+    alternatives.
     """
-    linear = xyz_to_linear_srgb(xyz_buffer * exposure)
+    linear = xyz_to_linear_srgb(xyz_buffer)
     linear = np.clip(linear, 0.0, None)
+    if adaptive:
+        nonzero = linear[linear > 0]
+        if nonzero.size > 0:
+            reference = float(nonzero.max()) if percentile >= 100.0 else float(np.percentile(nonzero, percentile))
+            if reference > 0:
+                linear = linear / reference
+    linear = linear * exposure
     srgb = _linear_to_srgb(linear)
     return (srgb * 255.0 + 0.5).astype(np.uint8)
