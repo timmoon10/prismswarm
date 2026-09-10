@@ -1,0 +1,20 @@
+[project]
+name = "prismswarm"
+version = "0.1.0"
+description = "A particle light simulation for exploring emergent mathematical phenomena."
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "pygame",
+    "ipython",
+]
+
+[project.scripts]
+prismswarm = "prismswarm.main:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["prismswarm*"]

@@ -20,25 +20,36 @@ enough to extend to higher dimensions (see Roadmap).
 ### Velocity fields
 
 The core abstraction is a velocity field: a function of
-`(positions, velocities, t, rng)` returning a velocity increment. Fields
-compose by addition — combining two fields is just summing their
-contributions, with no special-casing required in the integrator. A
+`(positions, velocities, t, dt, rng)` returning *the* velocity for this
+step — not an increment to accumulate. Fields are kinematic: like a fluid
+flow field advecting passive tracers, they prescribe velocity directly
+rather than exerting a force that builds up over time. Fields compose by
+addition — combining two fields is just summing their prescribed
+velocities, with no special-casing required in the integrator. A
 deterministic field (e.g. radial-inward) ignores `rng`; a stochastic field
-(e.g. Brownian motion) ignores position. Both fit the same interface.
+(e.g. Brownian motion) ignores position. Both fit the same interface, and
+`dt` is passed through explicitly so stochastic fields can discretize
+correctly (see below).
 
-Initial fields: a radially-inward uniform field, and Brownian motion
-(an Euler–Maruyama noise term, `Δv = sqrt(dt) * σ * randn()` per particle
-per step). Although the interface supports summing them, the first
-validation experiments run them independently, alternating between the two
-to check the visualization pipeline in isolation before exercising
-composition.
+Initial fields: a radially-inward uniform field, and Brownian motion. The
+latter is an Euler–Maruyama discretization: the Wiener process gives a
+position increment `dx = σ * sqrt(dt) * randn()` per step, so the field
+returns `v = σ / sqrt(dt) * randn()` — velocity that grows unboundedly as
+`dt -> 0`, reflecting the non-differentiability of Brownian paths — so
+that the integrator's `x += v * dt` recovers the correct increment.
+Although the interface supports summing fields, the first validation
+experiments run them independently, alternating between the two to check
+the visualization pipeline in isolation before exercising composition.
 
 ### Integration
 
-Explicit Euler: `v += field(...)`, `x += v * dt`. Force-based integration
-(e.g. Verlet) is an explicitly lower-priority future direction — it implies
-switching from a velocity-field abstraction to a force-field one, so it's
-being deferred rather than retrofitted early.
+Explicit Euler: velocity is recomputed each step as the sum of active
+fields (`v = Σ field_i(...)`), then `x += v * dt`. Velocity is not
+persistent, accumulated state — it's a quantity fully determined each
+instant by the fields currently acting on the particle. Force-based
+integration (e.g. Verlet) is an explicitly lower-priority future direction
+— it implies switching from this velocity-field abstraction to a
+force-field one, so it's being deferred rather than retrofitted early.
 
 ### Projection & detector
 
@@ -84,17 +95,24 @@ Proposed module layout:
   implementations (radial-inward, Brownian), composition helper.
 - `prismswarm/state.py` — particle state container (positions, velocities,
   wavelengths as NumPy float32 arrays) and the integration step.
-- `prismswarm/color.py` — CIE color-matching-function tables, XYZ
-  accumulation, XYZ→sRGB conversion, gamut handling, tonemapping.
+- `prismswarm/color.py` — wavelength→XYZ (an analytic multi-Gaussian fit
+  to the CIE 1931 color-matching functions, not a tabulated lookup),
+  XYZ→sRGB conversion, gamut handling, tonemapping.
 - `prismswarm/detector.py` — the detector buffer (independent resolution),
   splatting (bincount-based accumulation).
+- `prismswarm/simulation.py` — the mutable `Simulation` object shared
+  between the render loop and the REPL: particle state, detector, the
+  field catalog and which one is active, `dt`/`exposure`/`t`. Plain
+  attributes, no locking — each read/write is a single, GIL-atomic
+  reference assignment, and the render loop reads a consistent snapshot
+  once per frame.
 - `prismswarm/render.py` — pygame window, detector→display resize/blit,
   the main render loop.
 - `prismswarm/repl.py` — the control REPL: an `IPython.terminal.embed`
   shell (a plain terminal REPL, not a notebook or kernel) running on a
-  background thread, with live references to the active field list,
-  detector, and display parameters for interactive editing while the sim
-  runs.
+  background thread, with a live reference to the `Simulation` object for
+  interactive editing while the sim runs. Skips itself if stdin isn't a
+  real terminal, rather than spinning on repeated EOF.
 - `prismswarm/main.py` — entry point wiring the above together and holding
   the initial scene setup.
 
