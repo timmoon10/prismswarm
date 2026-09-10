@@ -27,6 +27,14 @@ Fields
                                   sim.fields['radial'] = fields.radial_inward(speed=0.6)
                                   sim.active_field_name = 'radial'
   fields.sum_fields(*fs)       compose fields by summing their velocities
+  fields.wavelength_coupled(f, weight)
+                                scale field f's velocity by a per-particle weight(wavelength), e.g.:
+                                  short_favored = fields.wavelength_coupled(
+                                      fields.radial_inward(speed=0.6),
+                                      fields.power_law_weight(reference_nm=530.0, exponent=-1.0))
+  fields.power_law_weight(reference_nm, exponent)
+                                (wavelength / reference_nm) ** exponent;
+                                exponent<0 favors short wavelengths, >0 favors long, 0 is uncoupled
 
 Exposure / display
   sim.exposure                 manual brightness gain (float, default 1.0),

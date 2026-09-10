@@ -47,5 +47,5 @@ class ParticleState:
         """Advance one Euler step: velocity is recomputed fresh from the
         field (it's a prescribed quantity, not an accumulator — see
         ``fields.py``), then position is advected by it."""
-        self.velocities = field(self.positions, self.velocities, t, dt, rng)
+        self.velocities = field(self.positions, self.velocities, self.wavelengths, t, dt, rng)
         self.positions = self.positions + self.velocities * dt

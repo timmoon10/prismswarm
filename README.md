@@ -20,16 +20,18 @@ enough to extend to higher dimensions (see Roadmap).
 ### Velocity fields
 
 The core abstraction is a velocity field: a function of
-`(positions, velocities, t, dt, rng)` returning *the* velocity for this
-step — not an increment to accumulate. Fields are kinematic: like a fluid
-flow field advecting passive tracers, they prescribe velocity directly
-rather than exerting a force that builds up over time. Fields compose by
-addition — combining two fields is just summing their prescribed
-velocities, with no special-casing required in the integrator. A
-deterministic field (e.g. radial-inward) ignores `rng`; a stochastic field
-(e.g. Brownian motion) ignores position. Both fit the same interface, and
-`dt` is passed through explicitly so stochastic fields can discretize
-correctly (see below).
+`(positions, velocities, wavelengths, t, dt, rng)` returning *the*
+velocity for this step — not an increment to accumulate. Fields are
+kinematic: like a fluid flow field advecting passive tracers, they
+prescribe velocity directly rather than exerting a force that builds up
+over time. Fields compose by addition — combining two fields is just
+summing their prescribed velocities, with no special-casing required in
+the integrator. A deterministic field (e.g. radial-inward) ignores `rng`;
+a stochastic field (e.g. Brownian motion) ignores position; a
+wavelength-independent field ignores `wavelengths` — every field shipped
+so far does exactly that, so wavelength coupling is strictly opt-in, never
+implicit. `dt` is passed through explicitly so stochastic fields can
+discretize correctly (see below).
 
 Initial fields: a radially-inward uniform field, and Brownian motion. The
 latter is an Euler–Maruyama discretization: the Wiener process gives a
@@ -40,6 +42,38 @@ that the integrator's `x += v * dt` recovers the correct increment.
 Although the interface supports summing fields, the first validation
 experiments run them independently, alternating between the two to check
 the visualization pipeline in isolation before exercising composition.
+
+### Wavelength-coupled fields
+
+`wavelength_coupled(base_field, weight)` scales a base field's velocity by
+a per-particle `weight(wavelength)`, leaving the base field itself
+wavelength-agnostic. It composes with `sum_fields` like any other field —
+that's the intended way to combine several differently-tuned couplings
+(e.g. a short-wavelength-favoring and a long-wavelength-favoring instance
+of the same base field, added together) into one scene, rather than
+building a separate multi-weight mechanism.
+
+The only weight shipped so far is `power_law_weight(reference_nm,
+exponent)`: `(wavelength / reference_nm) ** exponent`. `exponent = -1` is
+physically grounded — photon momentum `p = h/λ` means shorter wavelengths
+genuinely carry more momentum, so if the coupled field represents
+radiation-pressure-like forcing, favoring short wavelengths this way is
+the physically correct direction. `exponent = +1` favors long wavelengths
+instead; it isn't backed by an equally fundamental law the way `-1` is,
+but it's still a principled, tunable choice (readable e.g. as a
+diffraction-flavored metaphor, where longer wavelengths couple more
+strongly to a field's spatial structure). `exponent = 0` recovers an
+uncoupled field.
+
+A resonant/bandpass weight (Gaussian or Lorentzian, peaked at a target
+wavelength) was considered and is a legitimate physical model — it's the
+standard lineshape for a single absorption/emission resonance, the same
+mechanism that gives colored glass its color (a dopant ion's electronic
+transition). It's deliberately deferred: modeling multiple resonances
+well requires weight functions to compose by *multiplication* (matching
+Beer-Lambert absorption, where stacked absorbers multiply transmittances),
+which is a different composition rule than the addition used for fields
+themselves — worth its own design pass rather than bolting on now.
 
 ### Integration
 
@@ -97,7 +131,9 @@ presentation-layer concern.
 Proposed module layout:
 
 - `prismswarm/fields.py` — velocity field interface, initial
-  implementations (radial-inward, Brownian), composition helper.
+  implementations (radial-inward, Brownian), the additive composition
+  helper (`sum_fields`), and wavelength coupling (`wavelength_coupled`,
+  `power_law_weight`).
 - `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
   `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
   particle initialization. Implementations: monochrome, blackbody
@@ -173,9 +209,11 @@ influence the rest of the system).
 - Static emission spectra at initialization: monochrome (done), blackbody
   (done — defaults to the sun's ~5778K effective temperature, restricted
   to the visible range); white and discrete-RGB catalog entries later
-- Wavelength-dependent velocity field coupling — design pending
-  confirmation; see `fields.py`'s docstring once implemented for the
-  settled interface
+- Wavelength-dependent velocity field coupling (done): the `Field`
+  interface now carries `wavelengths`; `wavelength_coupled` +
+  `power_law_weight` give short- or long-wavelength-favoring coupling,
+  composable with `sum_fields`. Resonant/bandpass coupling (deferred, see
+  "Wavelength-coupled fields" above) intentionally left for later.
 - Explicitly deferred within this milestone: dynamic per-particle spectra
   (random walks, explicit spectral conversion) — a later milestone once
   static spectra and field coupling are both working
