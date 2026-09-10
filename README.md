@@ -130,10 +130,10 @@ presentation-layer concern.
 
 Proposed module layout:
 
-- `prismswarm/fields.py` — velocity field interface, initial
-  implementations (radial-inward, Brownian), the additive composition
-  helper (`sum_fields`), and wavelength coupling (`wavelength_coupled`,
-  `power_law_weight`).
+- `prismswarm/fields.py` — velocity field interface, implementations
+  (radial-inward, rotational, exponential confinement, Brownian), the
+  additive composition helper (`sum_fields`), and wavelength coupling
+  (`wavelength_coupled`, `power_law_weight`).
 - `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
   `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
   particle initialization. Implementations: monochrome, blackbody
@@ -219,11 +219,17 @@ influence the rest of the system).
   static spectra and field coupling are both working
 
 **M3 — Field catalog & composition**
-- Perlin noise, rectilinear, sinusoidal, stereographic projections of Hopf
-  fibers, exponentially-growing confining fields
+- Rotational (rigid-body rotation about the view axis) and
+  exponentially-growing radial confinement fields: done, ahead of the
+  rest of this milestone, alongside the M2 wavelength-coupling work
+- Still to add: Perlin noise, rectilinear, sinusoidal, stereographic
+  projections of Hopf fibers
 - Exercise field composition (addition) now that multiple fields exist
-- Discretization correction for the radial field to prevent outward
-  spiraling
+- Discretization correction for `rotational` to prevent outward spiraling:
+  explicit Euler applied to pure circular motion is unconditionally
+  unstable and drifts outward every step (verified — after 200 steps at
+  `angular_velocity=2.0`, a particle starting at r=1 drifts to r≈1.56).
+  Deferred deliberately for now.
 
 **M4 — Dynamic spectra**
 - Per-particle wavelength random walks; explore convergence to target

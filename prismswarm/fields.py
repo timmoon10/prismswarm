@@ -59,6 +59,72 @@ def radial_inward(
     return field
 
 
+def rotational(angular_velocity: float = 1.0) -> Field:
+    """Rigid-body rotation about the origin, in the xy-plane (the view
+    plane the orthographic projection uses) — "around the view axis" means
+    only the projected coordinates rotate; any further coordinates (z, and
+    any higher dimensions from a future extension) are left untouched,
+    which is what makes this definition dimension-agnostic rather than
+    hard-coded to 3D cross products.
+
+    Unlike ``radial_inward``'s "uniform" (distance-independent) speed, this
+    is genuine rigid-body rotation: speed grows linearly with distance from
+    the axis, i.e. ``v = angular_velocity * (-y, x, 0, ...)``, since that's
+    what a constant angular velocity actually means.
+
+    No discretization correction is applied: explicit Euler integration of
+    pure circular motion is unconditionally unstable and drifts outward
+    over time (each step's straight-line displacement along the tangent
+    lands slightly farther from the axis than it started). Deferred
+    deliberately — see the README roadmap.
+    """
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        v = np.zeros_like(pos)
+        v[:, 0] = -angular_velocity * pos[:, 1]
+        v[:, 1] = angular_velocity * pos[:, 0]
+        return v
+
+    return field
+
+
+def exponential_confinement(
+    center: Sequence[float] = (0.0, 0.0, 0.0),
+    length_scale: float = 1.0,
+    amplitude: float = 1.0,
+    eps: float = 1e-6,
+) -> Field:
+    """A radially-symmetric field pulling toward ``center`` whose speed
+    grows exponentially with distance: ``speed(r) = amplitude *
+    (exp(r / length_scale) - 1)`` (``expm1`` for numerical stability near
+    ``r = 0``, where it vanishes rather than a hard boundary — particles
+    near the center are left to whatever other fields are active, e.g.
+    Brownian, and only get pulled back once they wander roughly beyond
+    ``length_scale``. A soft confinement boundary, not a wall.
+
+    As with ``rotational``, no stability correction is applied: a large
+    ``dt`` combined with a particle far past ``length_scale`` can produce
+    a step large enough to overshoot the center before the exponential
+    growth has a chance to act as a brake, which is a real risk with this
+    field's shape under plain Euler — worth keeping ``dt`` modest relative
+    to ``length_scale / amplitude`` in practice.
+    """
+    center_arr = np.asarray(center, dtype=np.float32)
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        offset = center_arr - pos
+        dist = np.linalg.norm(offset, axis=-1, keepdims=True)
+        direction = offset / np.maximum(dist, eps)
+        speed = amplitude * np.expm1(dist / length_scale)
+        return (direction * speed).astype(pos.dtype)
+
+    return field
+
+
 def brownian(sigma: float = 1.0) -> Field:
     """Brownian motion, discretized via Euler-Maruyama.
 
