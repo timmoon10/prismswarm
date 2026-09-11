@@ -43,6 +43,20 @@ Although the interface supports summing fields, the first validation
 experiments run them independently, alternating between the two to check
 the visualization pipeline in isolation before exercising composition.
 
+`radial_inward`'s speed never decays near `center`, so explicit Euler
+integration doesn't converge particles there — it overshoots. Once a
+particle is closer than `speed * dt`, each step carries it clean through
+to the far side, where the flipped direction sends it right back: a
+permanent period-2 limit cycle, not noise or a numerical blow-up (verified
+— a particle placed at `speed * dt` from center oscillates across it
+indefinitely with no decay). Composed with other fields (`rotational`,
+`brownian`, ...), each bounce lands at a different angle, turning the
+static back-and-forth into the chaotic-looking pinballing sometimes seen
+around confined centers. This is an intentional consequence of "uniform"
+meaning non-decaying speed (see `fields.py`), in the same category as
+`rotational`'s outward-drift artifact below — documented as a known,
+embraced source of visual complexity rather than something to fix.
+
 ### Wavelength-coupled fields
 
 `wavelength_coupled(base_field, weight)` scales a base field's velocity by

@@ -45,6 +45,20 @@ def radial_inward(
     "Uniform" refers to speed, not direction: every particle moves toward
     the center at the same rate regardless of its distance from it. ``eps``
     guards the direction normalization for particles exactly at the center.
+
+    Because speed never decays near ``center``, explicit Euler integration
+    does not converge a particle to the center — it overshoots. Once a
+    particle is closer than ``speed * dt``, each step sends it clean
+    through to the opposite side, where the direction flips and the next
+    step sends it back: a permanent period-2 limit cycle at exactly
+    ``speed * dt`` from center, not decaying noise or a numerical blow-up
+    (``eps`` never even engages here; nothing overflows). Composed with
+    other fields — e.g. `rotational`, `brownian` — each bounce lands at a
+    different angle, which is what turns this from a static back-and-forth
+    into the chaotic-looking pinballing seen around confined centers.
+    This is a deliberate consequence of "uniform" meaning non-decaying
+    speed, not a bug to fix — see the README for the same category of
+    artifact in ``rotational``.
     """
     center_arr = np.asarray(center, dtype=np.float32)
 
