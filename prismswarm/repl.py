@@ -50,9 +50,9 @@ Exposure / display
                                 a percentile of the detector's brightest nonzero
                                 pixels maps to full brightness
   sim.adaptive_percentile      percentile in [0, 100] used when adaptive
-                                (default 100 = the single brightest pixel channel;
-                                lower e.g. 99.5 trades a few blown-out outliers
-                                for a brighter overall image)
+                                (default 99.5, trading a few blown-out outlier pixels
+                                for a brighter overall image; 100 = the single
+                                brightest pixel channel maps to white exactly)
 
 Simulation state
   sim.t, sim.dt                simulation time and timestep

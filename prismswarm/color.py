@@ -61,7 +61,7 @@ def tonemap(
     xyz_buffer: np.ndarray,
     exposure: float = 1.0,
     adaptive: bool = False,
-    percentile: float = 100.0,
+    percentile: float = 99.5,
 ) -> np.ndarray:
     """Detector XYZ accumulation buffer -> displayable uint8 sRGB.
 
@@ -77,8 +77,9 @@ def tonemap(
     zeros from empty background pixels would otherwise swamp anything
     below roughly the image's fill fraction) is scaled to hit full
     brightness. ``percentile=100`` is a literal "brightest pixel channel
-    maps to white"; a lower value (e.g. 99.5) trades a few blown-out
-    outlier pixels for a brighter overall image. ``exposure`` is always
+    maps to white"; the default of 99.5 trades a few blown-out outlier
+    pixels for a brighter overall image, since a single hot pixel
+    otherwise dictates the whole frame's exposure. ``exposure`` is always
     applied too, as a manual gain on top of whatever normalization (or
     lack of it) precedes it — the two combine rather than being
     alternatives.

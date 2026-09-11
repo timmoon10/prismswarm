@@ -172,10 +172,12 @@ presentation-layer concern.
    the detector. Particle density varies hugely across a frame and across
    scenes, so normalization defaults to adaptive: a percentile of the
    detector's brightest nonzero linear-sRGB channel values (default the
-   100th, i.e. the single brightest pixel channel) is scaled to hit full
-   brightness each frame. A manual `exposure` gain is always applied on
-   top of that, so the two aren't alternatives — adaptive picks a
-   reasonable per-frame baseline, manual pushes from there.
+   99.5th, trading a few blown-out outlier pixels for a brighter overall
+   image; the 100th would map the single brightest pixel channel exactly
+   to full brightness) is scaled to hit full brightness each frame. A
+   manual `exposure` gain is always applied on top of that, so the two
+   aren't alternatives — adaptive picks a reasonable per-frame baseline,
+   manual pushes from there.
 
 ## Software architecture
 

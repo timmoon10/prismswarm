@@ -32,7 +32,7 @@ class Simulation:
     dt: float = 1.0 / 30.0
     exposure: float = 1.0
     adaptive_exposure: bool = True
-    adaptive_percentile: float = 100.0
+    adaptive_percentile: float = 99.5
     t: float = 0.0
     running: bool = True
 
