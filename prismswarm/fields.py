@@ -220,3 +220,56 @@ def power_law_weight(reference_nm: float = 530.0, exponent: float = -1.0) -> Wav
         return (wavelength / reference_nm) ** exponent
 
     return weight
+
+
+def sinusoidal(
+    w: float | Sequence[float] = 2 * np.pi,
+    phi: float | Sequence[float] = 0.0,
+    weight: WavelengthWeight = power_law_weight(),
+    amplitude: float = 1.0,
+) -> Field:
+    """A separable standing-wave field: each axis's velocity is
+    ``amplitude * sin((w * x + phi) * weight(wavelength))``, computed
+    independently per axis (no cross terms between dimensions). ``w`` and
+    ``phi`` broadcast against a position the way ``center`` does elsewhere
+    in this module — a scalar applies uniformly to every axis, a per-axis
+    sequence gives a non-cubic grid or an inter-axis phase offset.
+
+    Per axis, ``sin(k*x) = 0`` has alternating stable and unstable zeros:
+    attracting where ``cos(k*x) < 0``, repelling where ``cos(k*x) > 0``.
+    Applied elementwise, this self-organizes particles onto a rectangular
+    lattice of period ``2*pi / (w * weight(wavelength))`` per axis, with no
+    damping term needed — unlike ``radial_inward``, speed vanishes exactly
+    at each lattice site (``sin(0) = 0``), so it's a soft landing rather
+    than an overshoot. Output is also unconditionally bounded to
+    ``[-amplitude, amplitude]`` (``|sin| <= 1`` always), regardless of how
+    extreme ``w``, ``phi``, or wavelength get — there's no clamping to do
+    here the way there is for ``exponential_confinement``.
+
+    ``weight`` rescales the *phase* per particle before the sine, not the
+    output magnitude the way ``wavelength_coupled`` scales a base field —
+    it changes where the lattice sites sit, not how fast a particle moves
+    through them. The default, ``power_law_weight()`` (``(wavelength/530)
+    ** -1``), means a single wavelength (e.g. a monochrome spectrum) makes
+    every particle share one lattice, while a spread of wavelengths gives
+    each particle its own rescaled spacing — interleaving several grids,
+    one per wavelength, in the same space.
+
+    The slope of ``sin`` at each stable zero is ``w * weight(wavelength)``,
+    which is also the local convergence rate, so a large ``w`` (a fine
+    grid) combined with a large ``dt`` can push past Euler's stability
+    threshold and jitter around a lattice site instead of settling into
+    it — bounded jitter, never a blow-up, but not fully converged either.
+    ``amplitude`` is independent of ``w``, so grid fineness and settling
+    speed can be tuned separately.
+    """
+    w_arr = np.asarray(w, dtype=np.float32)
+    phi_arr = np.asarray(phi, dtype=np.float32)
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        phase = (w_arr * pos + phi_arr) * weight(wavelength)[:, None]
+        return (amplitude * np.sin(phase)).astype(pos.dtype)
+
+    return field

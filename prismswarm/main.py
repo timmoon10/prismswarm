@@ -47,6 +47,7 @@ def main(argv: list[str] | None = None) -> None:
         "brownian": fields.brownian(sigma=0.05),
         "rotational": fields.rotational(angular_velocity=1.0),
         "confining": fields.exponential_confinement(length_scale=1.0, amplitude=0.3),
+        "sinusoidal": fields.sinusoidal(),
     }
 
     sim = Simulation(

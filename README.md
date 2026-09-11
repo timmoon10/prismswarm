@@ -89,6 +89,43 @@ Beer-Lambert absorption, where stacked absorbers multiply transmittances),
 which is a different composition rule than the addition used for fields
 themselves — worth its own design pass rather than bolting on now.
 
+### Sinusoidal (grid-forming) field
+
+`sinusoidal(w, phi, weight, amplitude)` computes each axis independently
+as `amplitude * sin((w * x + phi) * weight(wavelength))` — no cross terms
+between dimensions. Per axis, `sin(k*x) = 0` alternates between stable
+zeros (attracting, where `cos(k*x) < 0`) and unstable ones (repelling,
+where `cos(k*x) > 0`), so applied elementwise the field self-organizes
+particles onto a rectangular lattice of period `2*pi / (w *
+weight(wavelength))` per axis, with no damping term required — confirmed
+numerically (20 particles seeded uniformly in `[-2, 2]` under `dx/dt =
+sin(2*pi*x)` converge, after 600 Euler steps, exactly onto the stable
+half-integer lattice `{..., -1.5, -0.5, 0.5, 1.5, ...}`, skipping the
+unstable integers entirely). Unlike `radial_inward`, speed vanishes right
+at each lattice site rather than overshooting it, and the output is
+unconditionally bounded to `[-amplitude, amplitude]` (`|sin| <= 1` always)
+regardless of how extreme `w`, `phi`, or wavelength get — no clamping
+needed the way `exponential_confinement` requires.
+
+`weight` (default `power_law_weight()`) rescales the *phase* per particle
+before the sine, which is a different role than `wavelength_coupled`'s
+output-magnitude scaling elsewhere: it changes where the lattice sites
+sit, not how fast a particle moves through them. A single wavelength (a
+monochrome spectrum) puts every particle on one shared lattice; a spread
+of wavelengths gives each particle its own rescaled spacing, interleaving
+several lattices — one per wavelength — in the same space. Wavelengths
+(~380-780nm) and positions (O(1)) live on very different scales, so the
+weight is normalized against a reference wavelength (`power_law_weight`'s
+`reference_nm`, default 530) rather than using the raw wavelength value,
+keeping the phase-scaling factor O(1) by default.
+
+The slope of `sin` at each stable zero is `w * weight(wavelength)`, which
+is also the local convergence rate: a large `w` (a fine grid) combined
+with a large `dt` can push past Euler's stability threshold and jitter
+around a lattice site instead of settling into it. Bounded jitter, never
+a blow-up — but not fully converged either. `amplitude` is independent of
+`w`, so grid fineness and settling speed can be tuned separately.
+
 ### Integration
 
 Explicit Euler: velocity is recomputed each step as the sum of active
@@ -145,9 +182,9 @@ presentation-layer concern.
 Proposed module layout:
 
 - `prismswarm/fields.py` — velocity field interface, implementations
-  (radial-inward, rotational, exponential confinement, Brownian), the
-  additive composition helper (`sum_fields`), and wavelength coupling
-  (`wavelength_coupled`, `power_law_weight`).
+  (radial-inward, rotational, exponential confinement, Brownian,
+  sinusoidal), the additive composition helper (`sum_fields`), and
+  wavelength coupling (`wavelength_coupled`, `power_law_weight`).
 - `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
   `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
   particle initialization. Implementations: monochrome, blackbody
@@ -242,11 +279,13 @@ influence the rest of the system).
   static spectra and field coupling are both working
 
 **M3 — Field catalog & composition**
-- Rotational (rigid-body rotation about the view axis) and
-  exponentially-growing radial confinement fields: done, ahead of the
-  rest of this milestone, alongside the M2 wavelength-coupling work
-- Still to add: Perlin noise, rectilinear, sinusoidal, stereographic
-  projections of Hopf fibers
+- Rotational (rigid-body rotation about the view axis), exponentially-
+  growing radial confinement, and sinusoidal (wavelength-phase-coupled,
+  grid-forming — see "Sinusoidal (grid-forming) field" above) fields:
+  done, ahead of the rest of this milestone, alongside the M2
+  wavelength-coupling work
+- Still to add: Perlin noise, rectilinear, stereographic projections of
+  Hopf fibers
 - Exercise field composition (addition) now that multiple fields exist
 - Discretization correction for `rotational` to prevent outward spiraling:
   explicit Euler applied to pure circular motion is unconditionally

@@ -35,6 +35,13 @@ Fields
   fields.power_law_weight(reference_nm, exponent)
                                 (wavelength / reference_nm) ** exponent;
                                 exponent<0 favors short wavelengths, >0 favors long, 0 is uncoupled
+  fields.sinusoidal(w, phi, weight, amplitude)
+                                amplitude*sin((w*x+phi)*weight(wavelength)) per axis;
+                                self-organizes particles onto a rectangular lattice (period
+                                2*pi/(w*weight(wavelength)) per axis) with no damping needed;
+                                a single wavelength shares one lattice, a spread interleaves
+                                several at different spacings. w/phi accept a scalar or a
+                                per-axis sequence, like center elsewhere in fields.py.
 
 Exposure / display
   sim.exposure                 manual brightness gain (float, default 1.0),
