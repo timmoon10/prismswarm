@@ -148,16 +148,25 @@ Proposed module layout:
   splatting (bincount-based accumulation).
 - `prismswarm/simulation.py` — the mutable `Simulation` object shared
   between the render loop and the REPL: particle state, detector, the
-  field catalog and which one is active, `dt`, and the exposure knobs
-  (`exposure`, `adaptive_exposure`, `adaptive_percentile`). Plain
-  attributes, no locking — each read/write is a single, GIL-atomic
-  reference assignment, and the render loop reads a consistent snapshot
-  once per frame.
+  field catalog and which one is active, the spectrum used to (re)seed
+  wavelengths, `dt`, and the exposure knobs (`exposure`, `adaptive_exposure`,
+  `adaptive_percentile`). Plain attributes, no locking — each read/write is
+  a single, GIL-atomic reference assignment, and the render loop reads a
+  consistent snapshot once per frame. `Simulation.reset()` reinitializes
+  the particle population from a fresh uniform ball using the stored `rng`
+  and `spectrum` — the recovery path for a swarm that has wandered
+  off-screen or gone non-finite.
 - `prismswarm/render.py` — pygame window, detector→display resize/blit,
   the main render loop. The only input it handles is window close /
   `Esc`; everything else is REPL-only (no ad hoc keyboard shortcuts for
   simulation parameters — those don't scale past a couple of options and
-  the REPL already covers it).
+  the REPL already covers it). Since the REPL can push the sim into a bad
+  state with no validation, the per-frame body is wrapped in a
+  try/except: an exception prints its traceback once (not every frame,
+  while the same error persists) and surfaces in the window title, rather
+  than crashing the process — which would otherwise take the REPL's
+  daemon thread down with it. `sim.reset()` (see `simulation.py`) is the
+  usual recovery.
 - `prismswarm/repl.py` — the control REPL: an `IPython.terminal.embed`
   shell (a plain terminal REPL, not a notebook or kernel) running on a
   background thread, with a live reference to the `Simulation` object for

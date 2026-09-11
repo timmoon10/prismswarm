@@ -55,6 +55,7 @@ def main(argv: list[str] | None = None) -> None:
         fields=field_catalog,
         active_field_name="radial",
         rng=rng,
+        spectrum=spectrum,
         dt=1.0 / args.fps,
         exposure=args.exposure,
     )

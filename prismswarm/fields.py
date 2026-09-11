@@ -95,6 +95,7 @@ def exponential_confinement(
     length_scale: float = 1.0,
     amplitude: float = 1.0,
     eps: float = 1e-6,
+    max_exponent: float = 0.5 * float(np.log(np.finfo(np.float32).max)),
 ) -> Field:
     """A radially-symmetric field pulling toward ``center`` whose speed
     grows exponentially with distance: ``speed(r) = amplitude *
@@ -104,12 +105,21 @@ def exponential_confinement(
     Brownian, and only get pulled back once they wander roughly beyond
     ``length_scale``. A soft confinement boundary, not a wall.
 
-    As with ``rotational``, no stability correction is applied: a large
-    ``dt`` combined with a particle far past ``length_scale`` can produce
-    a step large enough to overshoot the center before the exponential
-    growth has a chance to act as a brake, which is a real risk with this
-    field's shape under plain Euler — worth keeping ``dt`` modest relative
-    to ``length_scale / amplitude`` in practice.
+    A large ``dt`` combined with a particle far past ``length_scale`` can
+    otherwise produce a step large enough to overshoot the center before
+    the exponential growth brakes it, sending ``r`` even farther out next
+    step — a runaway that reaches ``inf`` in a handful of steps and ``nan``
+    shortly after (once a position update involves ``inf - inf``). To keep
+    that from ever producing non-finite state, the exponent ``r /
+    length_scale`` is clamped to ``max_exponent`` before ``expm1``, which
+    bounds ``speed`` to a large-but-finite value instead of letting it
+    overflow. The default, ``ln(float32 max) / 2``, keeps ``exp(exponent)``
+    itself far from float32 overflow, leaving headroom for the subsequent
+    multiply by ``amplitude`` and the direction vector. This bounds the
+    field's own output but doesn't prevent a large step from a *different*
+    field or an oversized ``dt`` from still producing a bad step —
+    ``dt`` modest relative to ``length_scale / amplitude`` remains good
+    practice.
     """
     center_arr = np.asarray(center, dtype=np.float32)
 
@@ -119,7 +129,8 @@ def exponential_confinement(
         offset = center_arr - pos
         dist = np.linalg.norm(offset, axis=-1, keepdims=True)
         direction = offset / np.maximum(dist, eps)
-        speed = amplitude * np.expm1(dist / length_scale)
+        exponent = np.minimum(dist / length_scale, max_exponent)
+        speed = amplitude * np.expm1(exponent)
         return (direction * speed).astype(pos.dtype)
 
     return field

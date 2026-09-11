@@ -53,6 +53,14 @@ Simulation state
                                 raw NumPy arrays, shape (n, dim) / (n, dim) / (n,)
   sim.detector.half_extent     world-space half-width mapped to the detector's pixel grid
   sim.rng                      shared numpy.random.Generator
+  sim.reset(n=None, radius=1.0)
+                                reinitialize the particle population from a fresh uniform
+                                ball (reusing sim.rng and sim.spectrum); recovers a swarm
+                                that has wandered off-screen or gone non-finite (inf/nan)
+                                without restarting the process. If the render loop hits an
+                                error, its traceback prints to the console and the window
+                                title shows ERROR until state is valid again — sim.reset()
+                                is usually the fix.
 
 Wavelengths (spectra.py)
   spectra.monochrome(nm), spectra.blackbody(temperature_k)
