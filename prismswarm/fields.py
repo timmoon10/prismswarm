@@ -72,11 +72,16 @@ def _as_velocity(direction: np.ndarray, magnitude: "np.ndarray | float", dtype: 
 # --- Profiles: scalar coordinate -> scalar magnitude -----------------------
 
 
-def constant(value: float = -1.0, gain: Gain | None = None) -> Profile:
+def constant(value: float = 1.0, gain: Gain | None = None) -> Profile:
     """A profile that ignores its coordinate entirely: ``value`` (times
-    ``gain``, if given). With a ``radial_field``, ``value = -1`` (the
-    default) reproduces the old ``radial_inward``: constant inward speed
-    regardless of distance from center.
+    ``gain``, if given). ``value`` defaults to ``1`` — this profile
+    unscaled — with no bias toward either sign: a radially-symmetric field
+    is, in general, ``f(r) * direction`` for *any* signed ``f`` (gravity is
+    ``f(r) < 0``, Coulomb repulsion between like charges is ``f(r) > 0``),
+    so a negative ``value`` isn't a special case here, just the other half
+    of the ordinary range. With a ``radial_field`` (whose ``direction`` is
+    outward), a negative ``value`` pulls inward and a positive one pushes
+    outward.
     """
     if gain is None:
         def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
@@ -110,18 +115,19 @@ def linear(slope: float = 1.0, gain: Gain | None = None) -> Profile:
 
 def exponential(
     rate: float = 1.0,
-    amplitude: float = -1.0,
+    amplitude: float = 1.0,
     gain: Gain | None = None,
     max_exponent: float = _MAX_EXPONENT,
 ) -> Profile:
     """``amplitude * expm1(min(rate * coordinate, max_exponent))`` (times
-    ``gain``, if given) — with a ``radial_field``, this reproduces the old
-    ``exponential_confinement``: speed vanishes (``expm1(0) = 0``) at
-    ``coordinate = 0`` and grows exponentially with distance. Since
-    ``radial_field``'s direction is outward, ``amplitude`` defaults to
-    negative (matching ``constant``'s default) so the profile pulls inward
-    — confining — rather than pushing particles out; a positive
-    ``amplitude`` gives exponential repulsion instead. A large
+    ``gain``, if given): speed vanishes (``expm1(0) = 0``) at ``coordinate
+    = 0`` and grows exponentially with distance. ``amplitude`` defaults to
+    ``1`` — this profile unscaled, same convention as ``constant`` — with
+    no bias toward either sign: with a ``radial_field`` (whose
+    ``direction`` is outward), a negative ``amplitude`` gives exponential
+    confinement (pulling in, harder the farther out a particle is) and a
+    positive one gives exponential repulsion; see ``constant`` for why
+    neither sign is a special case. A large
     ``dt`` combined with a coordinate far past ``1 / rate`` can otherwise
     produce a step large enough to overshoot before the exponential growth
     brakes it, sending the coordinate even farther out next step — a
@@ -178,7 +184,7 @@ def sinusoidal(frequency: float = 1.0, phase: float = 0.0, amplitude: float = 1.
 
 
 def radial_field(
-    profile: Profile = constant(-1.0),
+    profile: Profile = constant(),
     center: Sequence[float] = (0.0, 0.0, 0.0),
     softening: float = _DEFAULT_SOFTENING,
 ) -> Field:
@@ -190,8 +196,17 @@ def radial_field(
     so softening lives entirely here: it's ``direction`` that's ill-defined
     (``0/0``) at ``center`` without it, and the softened denominator makes
     ``direction`` (and so the whole field) smoothly vanish there instead,
-    rather than picking an arbitrary direction. See the README for how
-    this removes ``radial_inward``'s old center-overshoot artifact.
+    rather than picking an arbitrary direction.
+
+    The bare default, ``profile=constant()``, is the ``direction`` field
+    itself unscaled — pure unit-speed outward flow — since that's the
+    neutral composition (profile identity, no sign bias) rather than a
+    choice tuned to any particular intended use. For inward/confining
+    behavior, negate the profile's scale explicitly, e.g.
+    ``radial_field(profile=constant(-1.0))`` (the old ``radial_inward``,
+    which no longer has its old center-overshoot artifact here — see the
+    README) or ``radial_field(profile=exponential(amplitude=-1.0))`` — see
+    those profiles' docstrings for why the sign isn't a special case.
     """
     center_arr = np.asarray(center, dtype=np.float32)
 

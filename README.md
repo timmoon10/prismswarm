@@ -69,8 +69,19 @@ projections on the roadmap won't decompose this way and will implement
   shear flow) is a first-class case, not a special one.
 - A **profile** (`constant`, `linear`, `exponential`, `sinusoidal`) is a
   plain scalar→scalar shape function applied to the coordinate, giving the
-  field's magnitude. `radial_field(profile=constant(-1.0))` is the old
-  `radial_inward`; `radial_field(profile=exponential(...))` is the old
+  field's magnitude. Every profile's scale parameter (`constant`'s
+  `value`, `linear`'s `slope`, `exponential`'s `amplitude`, `sinusoidal`'s
+  `amplitude`) defaults to `1` — the profile unscaled, with no bias toward
+  either sign. That matters because a radially-symmetric vector field is,
+  in general, `f(r) * direction` for *any* signed `f` (gravity is `f(r) <
+  0`, Coulomb repulsion between like charges is `f(r) > 0`), so with
+  `radial_field` (outward `direction`), a negative scale pulls inward and
+  a positive one pushes outward — neither is a special case, and the
+  default deliberately doesn't favor one over the other just because one
+  of them happens to match a familiar use case (confinement, in this
+  case) — see `constant`'s and `exponential`'s docstrings. Concretely:
+  `radial_field(profile=constant(-1.0))` is the old `radial_inward`;
+  `radial_field(profile=exponential(amplitude=-1.0))` is the old
   `exponential_confinement`; `tangential_field(profile=linear(w))` is the
   old `rotational`; `axial_field(profile=sinusoidal(...))` is a
   single-wavevector plane wave.
@@ -107,8 +118,8 @@ and `tangential_field` fix this by normalizing direction against
 coordinate handed to `profile` as the true, unsoftened distance. The
 softened direction's own magnitude smoothly shrinks to `0` exactly at
 `center` (rather than being clamped to a unit vector all the way in), so
-`radial_field() * constant(-1.0)` — the old `radial_inward` — no longer
-has a non-decaying speed near the center: velocity is `direction *
+`radial_field(profile=constant(-1.0))` — the old `radial_inward` — no
+longer has a non-decaying speed near the center: velocity is `direction *
 profile`, and `direction -> 0` there regardless of what `profile` returns.
 That eliminates the permanent period-2 overshoot bounce this field used to
 have at `center` (a direct consequence of the direction magnitude no
