@@ -3,7 +3,8 @@ and the REPL (background thread).
 
 Field-catalog membership, exposure, and dt are all plain attributes so the
 REPL can rebind them (e.g. ``sim.active_field_name = "brownian"`` or
-``sim.fields["radial"] = fields.radial_inward(speed=0.6)``) between frames
+``sim.fields["radial"] = fields.radial_field(profile=fields.constant(-0.6))``)
+between frames
 without any locking: each attribute read/write is a single Python
 reference assignment, which is atomic under the GIL, and the render loop
 only ever reads a consistent snapshot once per frame.
@@ -48,7 +49,7 @@ class Simulation:
         """Reinitialize the particle population from a fresh uniform ball,
         discarding current positions/velocities/wavelengths. The recovery
         path for a swarm that has wandered far off-screen or gone
-        non-finite (see ``fields.py``'s ``exponential_confinement`` for one
+        non-finite (see ``fields.py``'s ``exponential`` profile for one
         source of that) without restarting the process. Reuses ``rng`` and
         ``spectrum`` as originally configured; ``n`` defaults to the
         current particle count.

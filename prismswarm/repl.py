@@ -24,24 +24,34 @@ own state if you need a consistent snapshot across multiple attributes.
 Fields
   sim.active_field_name        key into sim.fields that's currently driving the sim
   sim.fields                   dict[str, Field]; assign to add or replace a field, e.g.:
-                                  sim.fields['radial'] = fields.radial_inward(speed=0.6)
+                                  sim.fields['radial'] = fields.radial_field(profile=fields.constant(-0.6))
                                   sim.active_field_name = 'radial'
   fields.sum_fields(*fs)       compose fields by summing their velocities
-  fields.wavelength_coupled(f, weight)
-                                scale field f's velocity by a per-particle weight(wavelength), e.g.:
-                                  short_favored = fields.wavelength_coupled(
-                                      fields.radial_inward(speed=0.6),
-                                      fields.power_law_weight(reference_nm=530.0, exponent=-1.0))
+
+  Fields are built from a geometry × profile × gain (see README "Structured fields"):
+  fields.radial_field(profile, center, softening)
+                                direction is outward from center; profile(distance) sets magnitude,
+                                e.g. fields.radial_field(profile=fields.constant(-1.0)) pulls inward
+  fields.tangential_field(profile, center, plane_axes, softening)
+                                direction is tangential within plane_axes (default: view plane);
+                                e.g. fields.tangential_field(profile=fields.linear(1.0)) is rigid rotation
+  fields.axial_field(profile, axis, direction, anchor, dim, rng)
+                                direction is fixed (defaults to axis); coordinate is dot(axis, x - anchor)
+  fields.constant(value, gain), fields.linear(slope, gain),
+  fields.exponential(rate, amplitude, gain), fields.sinusoidal(frequency, phase, amplitude, gain)
+                                profiles: coordinate -> magnitude. gain (see below) modulates a
+                                profile's own parameter (usually magnitude; sinusoidal's gain scales
+                                frequency and phase together instead — see fields.py)
+
   fields.power_law_weight(reference_nm, exponent)
-                                (wavelength / reference_nm) ** exponent;
-                                exponent<0 favors short wavelengths, >0 favors long, 0 is uncoupled
-  fields.sinusoidal(w, phi, weight, amplitude)
-                                amplitude*sin((w*x+phi)*weight(wavelength)) per axis;
-                                self-organizes particles onto a rectangular lattice (period
-                                2*pi/(w*weight(wavelength)) per axis) with no damping needed;
-                                a single wavelength shares one lattice, a spread interleaves
-                                several at different spacings. w/phi accept a scalar or a
-                                per-axis sequence, like center elsewhere in fields.py.
+                                a Gain: (wavelength / reference_nm) ** exponent, equal to 1 at
+                                reference_nm; exponent<0 favors short wavelengths, >0 favors long,
+                                0 is no modulation. Plug into any profile's gain=, e.g.:
+                                  short_favored = fields.radial_field(
+                                      profile=fields.constant(-0.6, gain=fields.power_law_weight(exponent=-1.0)))
+  fields.modulated(field, gain)
+                                rescale an already-built field's total output by gain, for when
+                                you don't/can't reach into its profile's own gain parameter
 
 Exposure / display
   sim.exposure                 manual brightness gain (float, default 1.0),

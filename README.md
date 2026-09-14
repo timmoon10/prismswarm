@@ -43,88 +43,103 @@ Although the interface supports summing fields, the first validation
 experiments run them independently, alternating between the two to check
 the visualization pipeline in isolation before exercising composition.
 
-`radial_inward`'s speed never decays near `center`, so explicit Euler
-integration doesn't converge particles there — it overshoots. Once a
-particle is closer than `speed * dt`, each step carries it clean through
-to the far side, where the flipped direction sends it right back: a
-permanent period-2 limit cycle, not noise or a numerical blow-up (verified
-— a particle placed at `speed * dt` from center oscillates across it
-indefinitely with no decay). Composed with other fields (`rotational`,
-`brownian`, ...), each bounce lands at a different angle, turning the
-static back-and-forth into the chaotic-looking pinballing sometimes seen
-around confined centers. This is an intentional consequence of "uniform"
-meaning non-decaying speed (see `fields.py`), in the same category as
-`rotational`'s outward-drift artifact below — documented as a known,
-embraced source of visual complexity rather than something to fix.
+### Structured fields: geometry × profile × gain
 
-### Wavelength-coupled fields
+The field catalog (`radial_inward`, `rotational`, `exponential_confinement`,
+the old lattice-forming `sinusoidal`, and the ad hoc `wavelength_coupled`
+wrapper) was a set of one-off constructors named after the *use case* they
+were built for, each re-deriving its own direction/magnitude/singularity
+handling. It's been replaced with a small, general system built from three
+independent pieces, none of which is required to construct a `Field` (the
+raw `Field` callable — `(pos, vel, wavelength, t, dt, rng) -> velocity` —
+is still the actual interface; this is one convenient way to build one, not
+a shape every field must fit. Perlin noise and the Hopf-fibration
+projections on the roadmap won't decompose this way and will implement
+`Field` directly when they land):
 
-`wavelength_coupled(base_field, weight)` scales a base field's velocity by
-a per-particle `weight(wavelength)`, leaving the base field itself
-wavelength-agnostic. It composes with `sum_fields` like any other field —
-that's the intended way to combine several differently-tuned couplings
-(e.g. a short-wavelength-favoring and a long-wavelength-favoring instance
-of the same base field, added together) into one scene, rather than
-building a separate multi-weight mechanism.
+- A **geometry** factory (`radial_field`, `tangential_field`, `axial_field`)
+  turns position into a scalar *coordinate* and a unit-ish *direction*
+  vector: radial distance from a center with the outward direction,
+  tangential distance/direction within a rotation plane, or a linear
+  projection onto an axis with a fixed direction. `radial_field` and
+  `tangential_field` accept an arbitrary `center`; `axial_field` an
+  arbitrary `axis` and (optionally) a separate `direction` — none of these
+  default to or assume the coordinate axes, so a linear field pushing along
+  one direction while varying with position along a *different* one (a
+  shear flow) is a first-class case, not a special one.
+- A **profile** (`constant`, `linear`, `exponential`, `sinusoidal`) is a
+  plain scalar→scalar shape function applied to the coordinate, giving the
+  field's magnitude. `radial_field(profile=constant(-1.0))` is the old
+  `radial_inward`; `radial_field(profile=exponential(...))` is the old
+  `exponential_confinement`; `tangential_field(profile=linear(w))` is the
+  old `rotational`; `axial_field(profile=sinusoidal(...))` is a
+  single-wavevector plane wave.
+- A **gain** (`Gain = Callable[[wavelength, t, rng], array | float]`) is a
+  dimensionless multiplier a profile can fold into one of its own
+  parameters, always normalized so a gain of `1` (the default when none is
+  given) leaves the profile unchanged — `power_law_weight` already has this
+  property (it evaluates to exactly `1` at its reference wavelength), which
+  is what makes it pluggable into *any* profile's gain slot without needing
+  to know that slot's scale. Deliberately excluded from `Gain`'s inputs is
+  position: a position-dependent scalar would be redundant with the
+  geometry/coordinate step, which is already a function of position.
 
-The only weight shipped so far is `power_law_weight(reference_nm,
-exponent)`: `(wavelength / reference_nm) ** exponent`. `exponent = -1` is
-physically grounded — photon momentum `p = h/λ` means shorter wavelengths
-genuinely carry more momentum, so if the coupled field represents
-radiation-pressure-like forcing, favoring short wavelengths this way is
-the physically correct direction. `exponent = +1` favors long wavelengths
-instead; it isn't backed by an equally fundamental law the way `-1` is,
-but it's still a principled, tunable choice (readable e.g. as a
-diffraction-flavored metaphor, where longer wavelengths couple more
-strongly to a field's spatial structure). `exponent = 0` recovers an
-uncoupled field.
+Which parameter a gain multiplies is decided by each profile, not by a
+single generic mechanism — `constant`, `linear`, and `exponential` apply
+their `gain` to the output magnitude, but `sinusoidal` applies it to the
+*entire pre-sine argument* (frequency and phase together), because that's
+what the deleted lattice field actually needed (a wavelength-dependent
+lattice spacing) and a magnitude-only gain can't reproduce it — scaling
+frequency and phase happens inside the `sin`, not as a multiply on its
+output. Each profile factory resolves `gain is None` once, at construction
+time, into one of two closures with no gain-related branching or
+array allocation in the per-step, per-frame hot path; the "no modulation"
+case costs exactly what it did before this system existed.
 
-A resonant/bandpass weight (Gaussian or Lorentzian, peaked at a target
+Softening the radial singularity (Plummer-style, avoiding the `1/r`-type
+blowup as a particle approaches `center`) belongs in the geometry step, not
+the profile: a profile like `constant` or `exponential` is already a
+well-defined, finite function at a coordinate of `0` — there's nothing to
+soften there. The actual singularity is the *direction* vector,
+`offset / |offset|`, which is `0/0` exactly at `center`. `radial_field`
+and `tangential_field` fix this by normalizing direction against
+`sqrt(|offset|^2 + softening^2)` instead of `|offset|`, while leaving the
+coordinate handed to `profile` as the true, unsoftened distance. The
+softened direction's own magnitude smoothly shrinks to `0` exactly at
+`center` (rather than being clamped to a unit vector all the way in), so
+`radial_field() * constant(-1.0)` — the old `radial_inward` — no longer
+has a non-decaying speed near the center: velocity is `direction *
+profile`, and `direction -> 0` there regardless of what `profile` returns.
+That eliminates the permanent period-2 overshoot bounce this field used to
+have at `center` (a direct consequence of the direction magnitude no
+longer being pinned to `1` all the way to `r = 0`, not something that
+needed separate verification). `tangential_field`'s outward-spiral drift
+under explicit Euler is unrelated to this and still applies — see the
+Roadmap.
+
+`modulated(field, gain)` is the complementary, coarser tool: it rescales an
+*already-built* field's total output by a gain, for when you want to tune
+wavelength/time dependence from outside without reaching into a profile's
+own parameters — e.g. scaling an entire `sum_fields(...)` composition, or
+a field you didn't construct yourself. `power_law_weight` (the only
+`Gain` shipped so far, `(wavelength / reference_nm) ** exponent`) works
+identically whether it's plugged into a profile's `gain` parameter or into
+`modulated()`, since both consume the same `Gain` type. `exponent = -1` is
+physically grounded (photon momentum `p = h/λ` — shorter wavelengths
+genuinely push harder under radiation-pressure-like forcing); `exponent =
++1` favors long wavelengths on a principled but not equally fundamental
+basis (e.g. a diffraction-flavored reading); `exponent = 0` recovers no
+modulation at all (same as omitting `gain`/`modulated` entirely).
+
+A resonant/bandpass gain (Gaussian or Lorentzian, peaked at a target
 wavelength) was considered and is a legitimate physical model — it's the
 standard lineshape for a single absorption/emission resonance, the same
 mechanism that gives colored glass its color (a dopant ion's electronic
-transition). It's deliberately deferred: modeling multiple resonances
-well requires weight functions to compose by *multiplication* (matching
+transition). It's deliberately deferred: modeling multiple resonances well
+requires gain functions to compose by *multiplication* (matching
 Beer-Lambert absorption, where stacked absorbers multiply transmittances),
 which is a different composition rule than the addition used for fields
 themselves — worth its own design pass rather than bolting on now.
-
-### Sinusoidal (grid-forming) field
-
-`sinusoidal(w, phi, weight, amplitude)` computes each axis independently
-as `amplitude * sin((w * x + phi) * weight(wavelength))` — no cross terms
-between dimensions. Per axis, `sin(k*x) = 0` alternates between stable
-zeros (attracting, where `cos(k*x) < 0`) and unstable ones (repelling,
-where `cos(k*x) > 0`), so applied elementwise the field self-organizes
-particles onto a rectangular lattice of period `2*pi / (w *
-weight(wavelength))` per axis, with no damping term required — confirmed
-numerically (20 particles seeded uniformly in `[-2, 2]` under `dx/dt =
-sin(2*pi*x)` converge, after 600 Euler steps, exactly onto the stable
-half-integer lattice `{..., -1.5, -0.5, 0.5, 1.5, ...}`, skipping the
-unstable integers entirely). Unlike `radial_inward`, speed vanishes right
-at each lattice site rather than overshooting it, and the output is
-unconditionally bounded to `[-amplitude, amplitude]` (`|sin| <= 1` always)
-regardless of how extreme `w`, `phi`, or wavelength get — no clamping
-needed the way `exponential_confinement` requires.
-
-`weight` (default `power_law_weight()`) rescales the *phase* per particle
-before the sine, which is a different role than `wavelength_coupled`'s
-output-magnitude scaling elsewhere: it changes where the lattice sites
-sit, not how fast a particle moves through them. A single wavelength (a
-monochrome spectrum) puts every particle on one shared lattice; a spread
-of wavelengths gives each particle its own rescaled spacing, interleaving
-several lattices — one per wavelength — in the same space. Wavelengths
-(~380-780nm) and positions (O(1)) live on very different scales, so the
-weight is normalized against a reference wavelength (`power_law_weight`'s
-`reference_nm`, default 530) rather than using the raw wavelength value,
-keeping the phase-scaling factor O(1) by default.
-
-The slope of `sin` at each stable zero is `w * weight(wavelength)`, which
-is also the local convergence rate: a large `w` (a fine grid) combined
-with a large `dt` can push past Euler's stability threshold and jitter
-around a lattice site instead of settling into it. Bounded jitter, never
-a blow-up — but not fully converged either. `amplitude` is independent of
-`w`, so grid fineness and settling speed can be tuned separately.
 
 ### Integration
 
@@ -183,10 +198,13 @@ presentation-layer concern.
 
 Proposed module layout:
 
-- `prismswarm/fields.py` — velocity field interface, implementations
-  (radial-inward, rotational, exponential confinement, Brownian,
-  sinusoidal), the additive composition helper (`sum_fields`), and
-  wavelength coupling (`wavelength_coupled`, `power_law_weight`).
+- `prismswarm/fields.py` — the `Field` interface; geometry factories
+  (`radial_field`, `tangential_field`, `axial_field`) and profiles
+  (`constant`, `linear`, `exponential`, `sinusoidal`) that combine into
+  structured fields; `Gain`-based modulation (`power_law_weight`,
+  `modulated`); the standalone `constant_field` and `brownian`; and the
+  additive composition helper (`sum_fields`). See "Structured fields:
+  geometry × profile × gain" above.
 - `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
   `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
   particle initialization. Implementations: monochrome, blackbody
@@ -272,28 +290,33 @@ influence the rest of the system).
   (done — defaults to the sun's ~5778K effective temperature, restricted
   to the visible range); white and discrete-RGB catalog entries later
 - Wavelength-dependent velocity field coupling (done): the `Field`
-  interface now carries `wavelengths`; `wavelength_coupled` +
-  `power_law_weight` give short- or long-wavelength-favoring coupling,
-  composable with `sum_fields`. Resonant/bandpass coupling (deferred, see
-  "Wavelength-coupled fields" above) intentionally left for later.
+  interface carries `wavelengths`; `power_law_weight` (a `Gain`) plugs into
+  any profile's gain parameter or into `modulated()` for short- or
+  long-wavelength-favoring coupling, composable with `sum_fields`.
+  Resonant/bandpass gain (deferred, see "Structured fields" above)
+  intentionally left for later.
 - Explicitly deferred within this milestone: dynamic per-particle spectra
   (random walks, explicit spectral conversion) — a later milestone once
   static spectra and field coupling are both working
 
 **M3 — Field catalog & composition**
-- Rotational (rigid-body rotation about the view axis), exponentially-
-  growing radial confinement, and sinusoidal (wavelength-phase-coupled,
-  grid-forming — see "Sinusoidal (grid-forming) field" above) fields:
-  done, ahead of the rest of this milestone, alongside the M2
-  wavelength-coupling work
+- Reworked the catalog from one-off named constructors into the
+  geometry × profile × gain system (done — see "Structured fields" above):
+  `radial_field`, `tangential_field`, `axial_field` geometries; `constant`,
+  `linear`, `exponential`, `sinusoidal` profiles; `power_law_weight` +
+  `modulated()` for wavelength/time-dependent gain. The old lattice-forming
+  sinusoidal field (a per-axis product of sines, geometrically distinct
+  from `axial_field`'s single-wavevector plane wave) was deleted rather
+  than kept alongside the new system — a deliberate prototype, not a
+  regression.
 - Still to add: Perlin noise, rectilinear, stereographic projections of
   Hopf fibers
 - Exercise field composition (addition) now that multiple fields exist
-- Discretization correction for `rotational` to prevent outward spiraling:
-  explicit Euler applied to pure circular motion is unconditionally
-  unstable and drifts outward every step (verified — after 200 steps at
-  `angular_velocity=2.0`, a particle starting at r=1 drifts to r≈1.56).
-  Deferred deliberately for now.
+- Discretization correction for `tangential_field` to prevent outward
+  spiraling: explicit Euler applied to pure circular motion is
+  unconditionally unstable and drifts outward every step (verified — after
+  200 steps at `angular_velocity=2.0`, a particle starting at r=1 drifts to
+  r≈1.56). Deferred deliberately for now.
 
 **M4 — Dynamic spectra**
 - Per-particle wavelength random walks; explore convergence to target

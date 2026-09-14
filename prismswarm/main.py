@@ -43,11 +43,11 @@ def main(argv: list[str] | None = None) -> None:
     particles = ParticleState.uniform_ball(n=args.num_particles, rng=rng, spectrum=spectrum, dim=3, radius=1.0)
 
     field_catalog = {
-        "radial": fields.radial_inward(speed=0.3),
+        "radial": fields.radial_field(profile=fields.constant(-0.3)),
         "brownian": fields.brownian(sigma=0.05),
-        "rotational": fields.rotational(angular_velocity=1.0),
-        "confining": fields.exponential_confinement(length_scale=1.0, amplitude=0.3),
-        "sinusoidal": fields.sinusoidal(),
+        "rotational": fields.tangential_field(profile=fields.linear(1.0)),
+        "confining": fields.radial_field(profile=fields.exponential(rate=1.0, amplitude=-0.3)),
+        "sinusoidal": fields.axial_field(profile=fields.sinusoidal(), rng=rng),
     }
 
     sim = Simulation(

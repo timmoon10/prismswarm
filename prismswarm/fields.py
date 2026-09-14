@@ -6,20 +6,33 @@ are *kinematic*: they prescribe the particle velocity directly, like a
 fluid flow field advecting passive tracers, rather than a force that
 accumulates into velocity over time. This is what makes stochastic,
 deterministic, and wavelength-coupled fields interoperable through a
-single interface: a deterministic field (e.g. radial-inward) ignores
-``rng``, a stochastic field (e.g. Brownian motion) ignores ``pos``/``vel``,
-a wavelength-independent field ignores ``wavelength`` — and every default
-field in this module does exactly that, so wavelength coupling is strictly
-opt-in (see ``wavelength_coupled`` below). ``dt`` is passed through
-explicitly (rather than baked into the field at construction time) because
+single interface: a deterministic field ignores ``rng``, a stochastic
+field (e.g. Brownian motion) ignores ``pos``/``vel``, a
+wavelength-independent field ignores ``wavelength`` — every field in this
+module that doesn't explicitly couple to wavelength does exactly that, so
+wavelength coupling is strictly opt-in. ``dt`` is passed through
+explicitly (rather than baked into a field at construction time) because
 stochastic fields need it to produce a correctly scaled discretization of
 their underlying SDE — see ``brownian`` below.
 
 Multiple fields compose by addition (``sum_fields``), since summing
-prescribed velocities is exactly how independent flows superpose — this
-is also how you'd combine several differently wavelength-tuned fields
-(e.g. one favoring short wavelengths, another favoring long ones) into a
-single scene.
+prescribed velocities is exactly how independent flows superpose.
+
+Most fields in this module are built from three independent pieces rather
+than each being a one-off constructor — see the README's "Structured
+fields: geometry × profile × gain" section for the design rationale. None
+of the three is required to build a ``Field``; they're a convenient
+factoring of the common case, not a shape every field must fit:
+
+- A *geometry* (``radial_field``, ``tangential_field``, ``axial_field``)
+  turns position into a scalar coordinate plus a direction vector.
+- A *profile* (``constant``, ``linear``, ``exponential``, ``sinusoidal``)
+  is a scalar-to-scalar shape function applied to that coordinate to get
+  a magnitude.
+- A *gain* (``Gain``) is an optional dimensionless multiplier, resolved
+  from wavelength/time/randomness, that a profile folds into one of its
+  own parameters — never into position, since a position-dependent
+  multiplier would just duplicate what the geometry step already does.
 """
 
 from __future__ import annotations
@@ -32,120 +45,270 @@ Field = Callable[
     [np.ndarray, np.ndarray, np.ndarray, float, float, np.random.Generator],
     np.ndarray,
 ]
-WavelengthWeight = Callable[[np.ndarray], np.ndarray]
+Profile = Callable[[np.ndarray, np.ndarray, float, float, np.random.Generator], np.ndarray]
+Gain = Callable[[np.ndarray, float, np.random.Generator], "np.ndarray | float"]
+
+_DEFAULT_SOFTENING = 1e-6
+_MAX_EXPONENT = 0.5 * float(np.log(np.finfo(np.float32).max))
 
 
-def radial_inward(
+def _unit(v: np.ndarray) -> np.ndarray:
+    return v / np.linalg.norm(v)
+
+
+def _as_velocity(direction: np.ndarray, magnitude: "np.ndarray | float", dtype: np.dtype) -> np.ndarray:
+    """Combine a per-particle ``direction`` (n, dim) with a ``magnitude``
+    that's either a bare scalar (a profile with no gain, or a gain that
+    ignores wavelength — the common, cheap case) or a per-particle (n,)
+    array, without forcing the scalar case through an (n,)-sized
+    allocation. ``np.asarray(scalar)[..., None]`` is a 0-d-to-(1,) reshape
+    (broadcasts against any ``direction`` for free); ``np.asarray((n,)
+    array)[..., None]`` is the (n, 1) reshape needed to broadcast
+    correctly against (n, dim).
+    """
+    return (direction * np.asarray(magnitude)[..., None]).astype(dtype)
+
+
+# --- Profiles: scalar coordinate -> scalar magnitude -----------------------
+
+
+def constant(value: float = -1.0, gain: Gain | None = None) -> Profile:
+    """A profile that ignores its coordinate entirely: ``value`` (times
+    ``gain``, if given). With a ``radial_field``, ``value = -1`` (the
+    default) reproduces the old ``radial_inward``: constant inward speed
+    regardless of distance from center.
+    """
+    if gain is None:
+        def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+            return value
+
+        return profile
+
+    def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+        return value * gain(wavelength, t, rng)
+
+    return profile
+
+
+def linear(slope: float = 1.0, gain: Gain | None = None) -> Profile:
+    """``slope * coordinate`` (times ``gain``, if given). With a
+    ``tangential_field``, this is genuine rigid-body rotation: ``slope`` is
+    the angular velocity, since constant angular velocity means speed
+    grows linearly with distance from the rotation axis.
+    """
+    if gain is None:
+        def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+            return slope * coordinate
+
+        return profile
+
+    def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+        return slope * coordinate * gain(wavelength, t, rng)
+
+    return profile
+
+
+def exponential(
+    rate: float = 1.0,
+    amplitude: float = -1.0,
+    gain: Gain | None = None,
+    max_exponent: float = _MAX_EXPONENT,
+) -> Profile:
+    """``amplitude * expm1(min(rate * coordinate, max_exponent))`` (times
+    ``gain``, if given) — with a ``radial_field``, this reproduces the old
+    ``exponential_confinement``: speed vanishes (``expm1(0) = 0``) at
+    ``coordinate = 0`` and grows exponentially with distance. Since
+    ``radial_field``'s direction is outward, ``amplitude`` defaults to
+    negative (matching ``constant``'s default) so the profile pulls inward
+    — confining — rather than pushing particles out; a positive
+    ``amplitude`` gives exponential repulsion instead. A large
+    ``dt`` combined with a coordinate far past ``1 / rate`` can otherwise
+    produce a step large enough to overshoot before the exponential growth
+    brakes it, sending the coordinate even farther out next step — a
+    runaway that reaches ``inf`` in a handful of steps and ``nan`` shortly
+    after. Clamping the exponent to ``max_exponent`` before ``expm1``
+    bounds this profile's own output to a large-but-finite value instead;
+    the default, ``ln(float32 max) / 2``, leaves headroom for the
+    subsequent multiply by ``amplitude`` and by the geometry's direction
+    vector. This doesn't prevent a large step from a *different* field or
+    an oversized ``dt`` from still producing a bad step — ``dt`` modest
+    relative to ``1 / (rate * amplitude)`` remains good practice.
+    """
+    if gain is None:
+        def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+            return amplitude * np.expm1(np.minimum(rate * coordinate, max_exponent))
+
+        return profile
+
+    def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+        return amplitude * np.expm1(np.minimum(rate * coordinate, max_exponent)) * gain(wavelength, t, rng)
+
+    return profile
+
+
+def sinusoidal(frequency: float = 1.0, phase: float = 0.0, amplitude: float = 1.0, gain: Gain | None = None) -> Profile:
+    """``amplitude * sin(2*pi*frequency*coordinate + phase)``, a single
+    scalar wave along whatever coordinate the geometry provides — combined
+    with ``axial_field``, this is a plane wave with wavevector ``axis``
+    (see the README's "Structured fields" section for how this differs
+    from the deleted lattice-forming sinusoidal field). Output is
+    unconditionally bounded to ``[-amplitude, amplitude]`` regardless of
+    how extreme ``frequency``, ``phase``, or ``gain`` get.
+
+    Unlike the other profiles, ``gain`` here scales the *entire argument*
+    to ``sin`` — frequency and phase together — rather than the output
+    magnitude: that's the only way a modulator can shift *where* the wave's
+    zeros land (e.g. a per-particle wavelength setting the lattice
+    spacing), which a magnitude-only gain can't reproduce.
+    """
+    two_pi_f = 2.0 * np.pi * frequency
+    if gain is None:
+        def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+            return amplitude * np.sin(two_pi_f * coordinate + phase)
+
+        return profile
+
+    def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+        return amplitude * np.sin((two_pi_f * coordinate + phase) * gain(wavelength, t, rng))
+
+    return profile
+
+
+# --- Geometries: position -> (coordinate, direction), folded into a Field --
+
+
+def radial_field(
+    profile: Profile = constant(-1.0),
     center: Sequence[float] = (0.0, 0.0, 0.0),
-    speed: float = 1.0,
-    eps: float = 1e-6,
+    softening: float = _DEFAULT_SOFTENING,
 ) -> Field:
-    """A field of constant magnitude pointing toward ``center``.
-
-    "Uniform" refers to speed, not direction: every particle moves toward
-    the center at the same rate regardless of its distance from it. ``eps``
-    guards the direction normalization for particles exactly at the center.
-
-    Because speed never decays near ``center``, explicit Euler integration
-    does not converge a particle to the center — it overshoots. Once a
-    particle is closer than ``speed * dt``, each step sends it clean
-    through to the opposite side, where the direction flips and the next
-    step sends it back: a permanent period-2 limit cycle at exactly
-    ``speed * dt`` from center, not decaying noise or a numerical blow-up
-    (``eps`` never even engages here; nothing overflows). Composed with
-    other fields — e.g. `rotational`, `brownian` — each bounce lands at a
-    different angle, which is what turns this from a static back-and-forth
-    into the chaotic-looking pinballing seen around confined centers.
-    This is a deliberate consequence of "uniform" meaning non-decaying
-    speed, not a bug to fix — see the README for the same category of
-    artifact in ``rotational``.
+    """``direction(x) * profile(coordinate(x))`` where ``coordinate`` is
+    the true (unsoftened) distance from ``center`` and ``direction`` is
+    the outward unit-ish vector ``offset / sqrt(|offset|^2 +
+    softening^2)``. ``profile`` never sees a singularity — ``constant``
+    and ``exponential`` are already well-defined at ``coordinate = 0`` —
+    so softening lives entirely here: it's ``direction`` that's ill-defined
+    (``0/0``) at ``center`` without it, and the softened denominator makes
+    ``direction`` (and so the whole field) smoothly vanish there instead,
+    rather than picking an arbitrary direction. See the README for how
+    this removes ``radial_inward``'s old center-overshoot artifact.
     """
     center_arr = np.asarray(center, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        offset = center_arr - pos
-        dist = np.linalg.norm(offset, axis=-1, keepdims=True)
-        direction = offset / np.maximum(dist, eps)
-        return (direction * speed).astype(pos.dtype)
+        offset = pos - center_arr
+        r = np.linalg.norm(offset, axis=-1)
+        r_safe = np.sqrt(r**2 + softening**2)
+        direction = offset / r_safe[..., None]
+        magnitude = profile(r, wavelength, t, dt, rng)
+        return _as_velocity(direction, magnitude, pos.dtype)
 
     return field
 
 
-def rotational(angular_velocity: float = 1.0) -> Field:
-    """Rigid-body rotation about the origin, in the xy-plane (the view
-    plane the orthographic projection uses) — "around the view axis" means
-    only the projected coordinates rotate; any further coordinates (z, and
-    any higher dimensions from a future extension) are left untouched,
-    which is what makes this definition dimension-agnostic rather than
-    hard-coded to 3D cross products.
-
-    Unlike ``radial_inward``'s "uniform" (distance-independent) speed, this
-    is genuine rigid-body rotation: speed grows linearly with distance from
-    the axis, i.e. ``v = angular_velocity * (-y, x, 0, ...)``, since that's
-    what a constant angular velocity actually means.
+def tangential_field(
+    profile: Profile = linear(1.0),
+    center: Sequence[float] = (0.0, 0.0, 0.0),
+    plane_axes: tuple[Sequence[float], Sequence[float]] | None = None,
+    softening: float = _DEFAULT_SOFTENING,
+) -> Field:
+    """Like ``radial_field``, but ``direction`` is tangential (the in-plane
+    radial direction rotated 90 degrees) rather than radial, and
+    ``coordinate`` is distance from ``center`` measured within the
+    rotation plane only. The plane is spanned by two arbitrary orthonormal
+    ``plane_axes`` (default: the first two coordinate axes, i.e. the
+    orthographic view plane); components of ``offset`` outside that plane
+    are left untouched, which is what keeps this dimension-agnostic rather
+    than hard-coded to a 3D cross product. ``tangential_field(profile=
+    linear(w))`` reproduces the old ``rotational(angular_velocity=w)``.
 
     No discretization correction is applied: explicit Euler integration of
     pure circular motion is unconditionally unstable and drifts outward
-    over time (each step's straight-line displacement along the tangent
-    lands slightly farther from the axis than it started). Deferred
-    deliberately — see the README roadmap.
+    over time. Deferred deliberately — see the README roadmap.
     """
+    center_arr = np.asarray(center, dtype=np.float32)
+    fixed_axes = None if plane_axes is None else tuple(_unit(np.asarray(a, dtype=np.float32)) for a in plane_axes)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        v = np.zeros_like(pos)
-        v[:, 0] = -angular_velocity * pos[:, 1]
-        v[:, 1] = angular_velocity * pos[:, 0]
-        return v
+        if fixed_axes is None:
+            dim = pos.shape[-1]
+            u = np.zeros(dim, dtype=pos.dtype)
+            u[0] = 1.0
+            v = np.zeros(dim, dtype=pos.dtype)
+            v[1] = 1.0
+        else:
+            u, v = fixed_axes
+        offset = pos - center_arr
+        a = offset @ u
+        b = offset @ v
+        r = np.sqrt(a**2 + b**2)
+        r_safe = np.sqrt(a**2 + b**2 + softening**2)
+        direction = (-b[..., None] * u + a[..., None] * v) / r_safe[..., None]
+        magnitude = profile(r, wavelength, t, dt, rng)
+        return _as_velocity(direction, magnitude, pos.dtype)
 
     return field
 
 
-def exponential_confinement(
-    center: Sequence[float] = (0.0, 0.0, 0.0),
-    length_scale: float = 1.0,
-    amplitude: float = 1.0,
-    eps: float = 1e-6,
-    max_exponent: float = 0.5 * float(np.log(np.finfo(np.float32).max)),
+def axial_field(
+    profile: Profile = linear(1.0),
+    axis: Sequence[float] | None = None,
+    direction: Sequence[float] | None = None,
+    anchor: Sequence[float] | None = None,
+    dim: int = 3,
+    rng: np.random.Generator | None = None,
 ) -> Field:
-    """A radially-symmetric field pulling toward ``center`` whose speed
-    grows exponentially with distance: ``speed(r) = amplitude *
-    (exp(r / length_scale) - 1)`` (``expm1`` for numerical stability near
-    ``r = 0``, where it vanishes rather than a hard boundary — particles
-    near the center are left to whatever other fields are active, e.g.
-    Brownian, and only get pulled back once they wander roughly beyond
-    ``length_scale``. A soft confinement boundary, not a wall.
-
-    A large ``dt`` combined with a particle far past ``length_scale`` can
-    otherwise produce a step large enough to overshoot the center before
-    the exponential growth brakes it, sending ``r`` even farther out next
-    step — a runaway that reaches ``inf`` in a handful of steps and ``nan``
-    shortly after (once a position update involves ``inf - inf``). To keep
-    that from ever producing non-finite state, the exponent ``r /
-    length_scale`` is clamped to ``max_exponent`` before ``expm1``, which
-    bounds ``speed`` to a large-but-finite value instead of letting it
-    overflow. The default, ``ln(float32 max) / 2``, keeps ``exp(exponent)``
-    itself far from float32 overflow, leaving headroom for the subsequent
-    multiply by ``amplitude`` and the direction vector. This bounds the
-    field's own output but doesn't prevent a large step from a *different*
-    field or an oversized ``dt`` from still producing a bad step —
-    ``dt`` modest relative to ``length_scale / amplitude`` remains good
-    practice.
+    """``direction * profile(coordinate)`` where ``coordinate = dot(axis,
+    x - anchor)`` and ``direction`` is a fixed unit vector — unlike the
+    radial geometries, this direction doesn't depend on position at all,
+    so there's no singularity to soften. ``axis`` and ``direction`` are
+    independent: leaving ``direction`` unset aligns it to ``axis`` (the
+    common case — e.g. ``axial_field(profile=sinusoidal(...))`` is a plane
+    wave traveling along and oscillating along the same line), but setting
+    them differently gives a shear flow — velocity pointing along one
+    direction while varying with position along another. If ``axis`` isn't
+    given, one is drawn from ``rng`` (a fresh unseeded generator if none is
+    passed) as a reasonable default direction, using ``dim`` since a
+    position array isn't available yet at construction time.
     """
-    center_arr = np.asarray(center, dtype=np.float32)
+    if axis is None:
+        axis_arr = _unit((rng or np.random.default_rng()).standard_normal(dim).astype(np.float32))
+    else:
+        axis_arr = _unit(np.asarray(axis, dtype=np.float32))
+    direction_arr = axis_arr if direction is None else _unit(np.asarray(direction, dtype=np.float32))
+    anchor_arr = np.zeros(axis_arr.shape[0], dtype=np.float32) if anchor is None else np.asarray(anchor, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        offset = center_arr - pos
-        dist = np.linalg.norm(offset, axis=-1, keepdims=True)
-        direction = offset / np.maximum(dist, eps)
-        exponent = np.minimum(dist / length_scale, max_exponent)
-        speed = amplitude * np.expm1(exponent)
-        return (direction * speed).astype(pos.dtype)
+        coordinate = (pos - anchor_arr) @ axis_arr
+        magnitude = profile(coordinate, wavelength, t, dt, rng)
+        return _as_velocity(direction_arr, magnitude, pos.dtype)
+
+    return field
+
+
+# --- Standalone fields (no meaningful position dependence) -----------------
+
+
+def constant_field(velocity: Sequence[float] | None = None, dim: int = 3, rng: np.random.Generator | None = None) -> Field:
+    """A uniform drift: every particle gets the same fixed velocity every
+    step, regardless of position. If ``velocity`` isn't given, one is
+    drawn from ``rng`` (a fresh unseeded generator if none is passed).
+    """
+    if velocity is None:
+        velocity_arr = (rng or np.random.default_rng()).standard_normal(dim).astype(np.float32)
+    else:
+        velocity_arr = np.asarray(velocity, dtype=np.float32)
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        return np.broadcast_to(velocity_arr, pos.shape).astype(pos.dtype)
 
     return field
 
@@ -170,6 +333,9 @@ def brownian(sigma: float = 1.0) -> Field:
     return field
 
 
+# --- Composition -------------------------------------------------------
+
+
 def sum_fields(*components: Field) -> Field:
     """Compose fields by summing their prescribed velocities."""
 
@@ -184,92 +350,45 @@ def sum_fields(*components: Field) -> Field:
     return combined
 
 
-def wavelength_coupled(base_field: Field, weight: WavelengthWeight) -> Field:
-    """Scale a base field's velocity by a per-particle wavelength-dependent
-    weight. The base field itself stays wavelength-agnostic; coupling is
-    entirely in ``weight``. Composes with ``sum_fields`` like any other
-    field, which is how multiple differently-tuned couplings combine (e.g.
-    a short-wavelength-favoring and a long-wavelength-favoring instance of
+def modulated(field: Field, gain: Gain) -> Field:
+    """Rescale an already-built field's total output velocity by ``gain``.
+    The complement to giving a profile its own ``gain`` parameter: this
+    applies from the outside, to a field whose internals you don't need to
+    (or can't) reach into — e.g. an entire ``sum_fields(...)`` composition.
+    Composes with ``sum_fields`` like any other field, which is how
+    several differently-tuned modulations combine into one scene (e.g. a
+    short-wavelength-favoring and a long-wavelength-favoring instance of
     the same base field, added together).
     """
 
     def coupled(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        return base_field(pos, vel, wavelength, t, dt, rng) * weight(wavelength)[:, None]
+        base = field(pos, vel, wavelength, t, dt, rng)
+        return _as_velocity(base, gain(wavelength, t, rng), pos.dtype)
 
     return coupled
 
 
-def power_law_weight(reference_nm: float = 530.0, exponent: float = -1.0) -> WavelengthWeight:
-    """``(wavelength / reference_nm) ** exponent``.
+def power_law_weight(reference_nm: float = 530.0, exponent: float = -1.0) -> Gain:
+    """``(wavelength / reference_nm) ** exponent`` — a ``Gain``: it
+    evaluates to exactly ``1`` at ``reference_nm``, which is what makes it
+    usable as a profile's ``gain`` parameter or with ``modulated()``
+    interchangeably, without either needing to know its scale.
 
-    ``exponent = -1`` favors short wavelengths: photon momentum
-    ``p = h/lambda`` is inversely proportional to wavelength, so if the
-    coupled field represents radiation-pressure-like forcing, shorter
-    wavelengths physically do push harder. ``exponent = +1`` favors long
-    wavelengths instead — not backed by the same fundamental law, but a
-    principled and equally tunable choice on its own terms (e.g. as a
-    diffraction-flavored metaphor: diffraction angle scales with
-    wavelength, so longer wavelengths could be read as coupling more
-    strongly to a field's spatial structure). ``exponent = 0`` recovers an
-    uncoupled field (weight is 1 everywhere).
+    ``exponent = -1`` is physically grounded: photon momentum ``p = h/λ``
+    is inversely proportional to wavelength, so if the modulated field
+    represents radiation-pressure-like forcing, shorter wavelengths
+    physically do push harder. ``exponent = +1`` favors long wavelengths
+    instead — not backed by the same fundamental law, but a principled and
+    equally tunable choice on its own terms (e.g. as a diffraction-flavored
+    metaphor: diffraction angle scales with wavelength, so longer
+    wavelengths could be read as coupling more strongly to a field's
+    spatial structure). ``exponent = 0`` recovers a gain of ``1``
+    everywhere, i.e. no modulation.
     """
 
-    def weight(wavelength: np.ndarray) -> np.ndarray:
+    def gain(wavelength: np.ndarray, t: float, rng: np.random.Generator) -> np.ndarray:
         return (wavelength / reference_nm) ** exponent
 
-    return weight
-
-
-def sinusoidal(
-    w: float | Sequence[float] = 2 * np.pi,
-    phi: float | Sequence[float] = 0.0,
-    weight: WavelengthWeight = power_law_weight(),
-    amplitude: float = 1.0,
-) -> Field:
-    """A separable standing-wave field: each axis's velocity is
-    ``amplitude * sin((w * x + phi) * weight(wavelength))``, computed
-    independently per axis (no cross terms between dimensions). ``w`` and
-    ``phi`` broadcast against a position the way ``center`` does elsewhere
-    in this module — a scalar applies uniformly to every axis, a per-axis
-    sequence gives a non-cubic grid or an inter-axis phase offset.
-
-    Per axis, ``sin(k*x) = 0`` has alternating stable and unstable zeros:
-    attracting where ``cos(k*x) < 0``, repelling where ``cos(k*x) > 0``.
-    Applied elementwise, this self-organizes particles onto a rectangular
-    lattice of period ``2*pi / (w * weight(wavelength))`` per axis, with no
-    damping term needed — unlike ``radial_inward``, speed vanishes exactly
-    at each lattice site (``sin(0) = 0``), so it's a soft landing rather
-    than an overshoot. Output is also unconditionally bounded to
-    ``[-amplitude, amplitude]`` (``|sin| <= 1`` always), regardless of how
-    extreme ``w``, ``phi``, or wavelength get — there's no clamping to do
-    here the way there is for ``exponential_confinement``.
-
-    ``weight`` rescales the *phase* per particle before the sine, not the
-    output magnitude the way ``wavelength_coupled`` scales a base field —
-    it changes where the lattice sites sit, not how fast a particle moves
-    through them. The default, ``power_law_weight()`` (``(wavelength/530)
-    ** -1``), means a single wavelength (e.g. a monochrome spectrum) makes
-    every particle share one lattice, while a spread of wavelengths gives
-    each particle its own rescaled spacing — interleaving several grids,
-    one per wavelength, in the same space.
-
-    The slope of ``sin`` at each stable zero is ``w * weight(wavelength)``,
-    which is also the local convergence rate, so a large ``w`` (a fine
-    grid) combined with a large ``dt`` can push past Euler's stability
-    threshold and jitter around a lattice site instead of settling into
-    it — bounded jitter, never a blow-up, but not fully converged either.
-    ``amplitude`` is independent of ``w``, so grid fineness and settling
-    speed can be tuned separately.
-    """
-    w_arr = np.asarray(w, dtype=np.float32)
-    phi_arr = np.asarray(phi, dtype=np.float32)
-
-    def field(
-        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
-    ) -> np.ndarray:
-        phase = (w_arr * pos + phi_arr) * weight(wavelength)[:, None]
-        return (amplitude * np.sin(phase)).astype(pos.dtype)
-
-    return field
+    return gain
