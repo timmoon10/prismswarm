@@ -152,30 +152,47 @@ def exponential(
     return profile
 
 
-def sinusoidal(frequency: float = 1.0, phase: float = 0.0, amplitude: float = 1.0, gain: Gain | None = None) -> Profile:
+def sinusoidal(
+    frequency: float = 1.0,
+    phase: float = 0.0,
+    amplitude: float = 1.0,
+    amplitude_gain: Gain | None = None,
+    frequency_gain: Gain | None = None,
+    phase_gain: Gain | None = None,
+) -> Profile:
     """``amplitude * sin(2*pi*frequency*coordinate + phase)``, a single
     scalar wave along whatever coordinate the geometry provides — combined
     with ``axial_field``, this is a plane wave with wavevector ``axis``
     (see the README's "Structured fields" section for how this differs
     from the deleted lattice-forming sinusoidal field). Output is
     unconditionally bounded to ``[-amplitude, amplitude]`` regardless of
-    how extreme ``frequency``, ``phase``, or ``gain`` get.
+    how extreme ``frequency``, ``phase``, or any gain get.
 
-    Unlike the other profiles, ``gain`` here scales the *entire argument*
-    to ``sin`` — frequency and phase together — rather than the output
-    magnitude: that's the only way a modulator can shift *where* the wave's
-    zeros land (e.g. a per-particle wavelength setting the lattice
-    spacing), which a magnitude-only gain can't reproduce.
+    Unlike the other profiles, ``sinusoidal`` has three independent scalar
+    knobs worth modulating rather than one, so each gets its own named
+    ``Gain`` hook instead of sharing a single ambiguous ``gain``:
+    ``amplitude_gain`` scales the output, same as every other profile's
+    ``gain``; ``frequency_gain`` and ``phase_gain`` scale ``frequency`` and
+    ``phase`` respectively, *before* they enter ``sin`` — the only way a
+    modulator can shift *where* the wave's zeros land (e.g. a per-particle
+    wavelength setting the lattice spacing), which scaling the output can't
+    reproduce. Passing the *same* ``Gain`` to both ``frequency_gain`` and
+    ``phase_gain`` reproduces the deleted lattice field's behavior (a
+    single wavelength-dependent factor scaling frequency and phase
+    together); passing it to only one modulates that one alone.
     """
     two_pi_f = 2.0 * np.pi * frequency
-    if gain is None:
+    if amplitude_gain is None and frequency_gain is None and phase_gain is None:
         def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
             return amplitude * np.sin(two_pi_f * coordinate + phase)
 
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        return amplitude * np.sin((two_pi_f * coordinate + phase) * gain(wavelength, t, rng))
+        freq = two_pi_f if frequency_gain is None else two_pi_f * frequency_gain(wavelength, t, rng)
+        ph = phase if phase_gain is None else phase * phase_gain(wavelength, t, rng)
+        out = amplitude * np.sin(freq * coordinate + ph)
+        return out if amplitude_gain is None else out * amplitude_gain(wavelength, t, rng)
 
     return profile
 
@@ -388,8 +405,10 @@ def modulated(field: Field, gain: Gain) -> Field:
 def power_law_weight(reference_nm: float = 530.0, exponent: float = -1.0) -> Gain:
     """``(wavelength / reference_nm) ** exponent`` — a ``Gain``: it
     evaluates to exactly ``1`` at ``reference_nm``, which is what makes it
-    usable as a profile's ``gain`` parameter or with ``modulated()``
-    interchangeably, without either needing to know its scale.
+    usable in any profile's gain hook (``gain``, or ``sinusoidal``'s
+    ``amplitude_gain``/``frequency_gain``/``phase_gain``) or with
+    ``modulated()`` interchangeably, without any of them needing to know
+    its scale.
 
     ``exponent = -1`` is physically grounded: photon momentum ``p = h/λ``
     is inversely proportional to wavelength, so if the modulated field

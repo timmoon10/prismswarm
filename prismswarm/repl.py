@@ -38,15 +38,20 @@ Fields
   fields.axial_field(profile, axis, direction, anchor, dim, rng)
                                 direction is fixed (defaults to axis); coordinate is dot(axis, x - anchor)
   fields.constant(value, gain), fields.linear(slope, gain),
-  fields.exponential(rate, amplitude, gain), fields.sinusoidal(frequency, phase, amplitude, gain)
-                                profiles: coordinate -> magnitude. gain (see below) modulates a
-                                profile's own parameter (usually magnitude; sinusoidal's gain scales
-                                frequency and phase together instead — see fields.py)
+  fields.exponential(rate, amplitude, gain)
+                                profiles: coordinate -> magnitude. gain (a Gain, see below) scales
+                                the profile's one scalar knob (value/slope/amplitude)
+  fields.sinusoidal(frequency, phase, amplitude, amplitude_gain, frequency_gain, phase_gain)
+                                has three knobs, so each gets its own named hook instead of one
+                                ambiguous gain: amplitude_gain scales the output like the others do;
+                                frequency_gain/phase_gain scale their parameter before it enters sin
+                                (the same Gain in both reproduces the old lattice field's
+                                frequency-and-phase-together wavelength coupling — see fields.py)
 
   fields.power_law_weight(reference_nm, exponent)
                                 a Gain: (wavelength / reference_nm) ** exponent, equal to 1 at
                                 reference_nm; exponent<0 favors short wavelengths, >0 favors long,
-                                0 is no modulation. Plug into any profile's gain=, e.g.:
+                                0 is no modulation. Plug into any profile's gain hook, e.g.:
                                   short_favored = fields.radial_field(
                                       profile=fields.constant(-0.6, gain=fields.power_law_weight(exponent=-1.0)))
   fields.modulated(field, gain)

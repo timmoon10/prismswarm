@@ -96,16 +96,24 @@ projections on the roadmap won't decompose this way and will implement
   geometry/coordinate step, which is already a function of position.
 
 Which parameter a gain multiplies is decided by each profile, not by a
-single generic mechanism — `constant`, `linear`, and `exponential` apply
-their `gain` to the output magnitude, but `sinusoidal` applies it to the
-*entire pre-sine argument* (frequency and phase together), because that's
-what the deleted lattice field actually needed (a wavelength-dependent
-lattice spacing) and a magnitude-only gain can't reproduce it — scaling
-frequency and phase happens inside the `sin`, not as a multiply on its
-output. Each profile factory resolves `gain is None` once, at construction
-time, into one of two closures with no gain-related branching or
-array allocation in the per-step, per-frame hot path; the "no modulation"
-case costs exactly what it did before this system existed.
+single generic mechanism. `constant`, `linear`, and `exponential` each
+have exactly one scalar knob, so its gain is unambiguously named `gain`.
+`sinusoidal` has three independent knobs worth modulating — amplitude,
+frequency, phase — so it names each hook after the parameter it touches
+(`amplitude_gain`, `frequency_gain`, `phase_gain`) instead of overloading
+a single `gain` to mean something different from what it means everywhere
+else in the module: `amplitude_gain` scales the output like the other
+profiles' `gain`, while `frequency_gain`/`phase_gain` scale their
+parameter *before* it enters `sin`, since that's the only way a modulator
+can shift *where* the wave's zeros land (e.g. a per-particle wavelength
+setting the lattice spacing) — scaling the output can't reproduce that.
+Passing the same `Gain` to both `frequency_gain` and `phase_gain`
+reproduces the deleted lattice field's single wavelength-dependent factor
+scaling frequency and phase together; passing it to only one modulates
+that one alone. Each profile factory resolves its gain parameters once,
+at construction time, into a closure with no gain-related branching or
+array allocation when none are given; the "no modulation" case costs
+exactly what it did before this system existed.
 
 Softening the radial singularity (Plummer-style, avoiding the `1/r`-type
 blowup as a particle approaches `center`) belongs in the geometry step, not
