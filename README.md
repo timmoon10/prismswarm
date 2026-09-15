@@ -27,21 +27,24 @@ prescribe velocity directly rather than exerting a force that builds up
 over time. Fields compose by addition — combining two fields is just
 summing their prescribed velocities, with no special-casing required in
 the integrator. A deterministic field (e.g. radial-inward) ignores `rng`;
-a stochastic field (e.g. Brownian motion) ignores position; a
+a stochastic field (e.g. white noise) ignores position; a
 wavelength-independent field ignores `wavelengths` — every field shipped
 so far does exactly that, so wavelength coupling is strictly opt-in, never
 implicit. `dt` is passed through explicitly so stochastic fields can
 discretize correctly (see below).
 
-Initial fields: a radially-inward uniform field, and Brownian motion. The
-latter is an Euler–Maruyama discretization: the Wiener process gives a
-position increment `dx = σ * sqrt(dt) * randn()` per step, so the field
-returns `v = σ / sqrt(dt) * randn()` — velocity that grows unboundedly as
-`dt -> 0`, reflecting the non-differentiability of Brownian paths — so
-that the integrator's `x += v * dt` recovers the correct increment.
-Although the interface supports summing fields, the first validation
-experiments run them independently, alternating between the two to check
-the visualization pipeline in isolation before exercising composition.
+Initial fields: a radially-inward uniform field, and `white_noise_field`
+(velocity drawn fresh each step as i.i.d. Gaussian noise — white noise at
+the velocity level). `white_noise_field` is an Euler–Maruyama
+discretization: integrating white-noise velocity produces Brownian motion
+in position, where the Wiener process gives a position increment `dx = σ *
+sqrt(dt) * randn()` per step, so the field returns `v = σ / sqrt(dt) *
+randn()` — velocity that grows unboundedly as `dt -> 0`, reflecting the
+non-differentiability of Brownian paths — so that the integrator's `x += v
+* dt` recovers the correct increment. Although the interface supports
+summing fields, the first validation experiments run them independently,
+alternating between the two to check the visualization pipeline in
+isolation before exercising composition.
 
 ### Structured fields: geometry × profile × gain
 
@@ -113,6 +116,17 @@ at construction time, into a closure with no gain-related branching or
 array allocation when none are given; the "no modulation" case costs
 exactly what it did before this system existed.
 
+The same convention extends to `white_noise_field`, which isn't built
+from a geometry × profile at all — it's a standalone `Field`, like
+`constant_field` — but does have a single scalar knob (`sigma`), so it
+takes a `gain` that scales it exactly like `constant`/`linear`/
+`exponential`'s does, e.g. `white_noise_field(sigma, gain=
+wavelength_power_law(exponent=-1))` for shorter wavelengths that diffuse
+faster. `constant_field` doesn't get the same treatment: its one
+parameter is a fixed vector, not a scalar magnitude, so there's no single
+obvious knob for a `gain` to multiply — `modulated()` already covers
+scaling its output identically.
+
 Softening the radial singularity (Plummer-style, avoiding the `1/r`-type
 blowup as a particle approaches `center`) belongs in the geometry step, not
 the profile: a profile like `constant` or `exponential` is already a
@@ -183,8 +197,8 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   generalizations of `sine_gain` and `square_gain` respectively.
   Ornstein-Uhlenbeck is the canonical continuous-time mean-reverting SDE
   (`dx = -theta*(x - mu)*dt + sigma*sqrt(dt)*dW`, discretized exactly like
-  `fields.brownian`) — in gain-space, the same shape as an
-  `exponential_confinement` field plus `brownian` noise, composed instead
+  `fields.white_noise_field`) — in gain-space, the same shape as an
+  `exponential_confinement` field plus white noise, composed instead
   around a resting gain value. `telegraph` is the random telegraph
   process / dichotomous Markov noise: switches between `low` and `high` at
   Poisson-arrival times (rate `rate`) instead of a fixed period, the
@@ -295,7 +309,7 @@ Proposed module layout:
   (`radial_field`, `tangential_field`, `axial_field`) and profiles
   (`constant`, `linear`, `exponential`, `sinusoidal`) that combine into
   structured fields; `modulated` for `Gain`-based modulation of a whole
-  field; the standalone `constant_field` and `brownian`; and the additive
+  field; the standalone `constant_field` and `white_noise_field`; and the additive
   composition helper (`sum_fields`). See "Structured fields: geometry ×
   profile × gain" above.
 - `prismswarm/gains.py` — the `Gain` type and its constructor catalog
@@ -321,8 +335,8 @@ Proposed module layout:
   `adaptive_percentile`). Plain attributes, no locking — each read/write is
   a single, GIL-atomic reference assignment, and the render loop reads a
   consistent snapshot once per frame. `Simulation.reset()` reinitializes
-  the particle population from a fresh uniform ball using the stored `rng`
-  and `spectrum` — the recovery path for a swarm that has wandered
+  the particle population from a fresh Gaussian cloud using the stored
+  `rng` and `spectrum` — the recovery path for a swarm that has wandered
   off-screen or gone non-finite.
 - `prismswarm/render.py` — pygame window, detector→display resize/blit,
   the main render loop. The only input it handles is window close /
@@ -365,7 +379,7 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
 
 **M1 — Core loop (done)**
 - Particle state in R^3, Euler integration
-- Radial-inward and Brownian fields, independently selectable at runtime
+- Radial-inward and white-noise fields, independently selectable at runtime
   (not summed yet)
 - Orthographic projection; detector buffer decoupled from display
   resolution

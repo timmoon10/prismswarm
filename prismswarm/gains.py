@@ -7,7 +7,7 @@ just duplicate what a `fields.py` geometry's coordinate step already does.
 ``Gain = Callable[[wavelength, t, dt, rng], array | float]``. ``dt`` is
 carried for the same reason `fields.Field` carries it: a stateful gain
 (`ornstein_uhlenbeck`, `telegraph`) needs it to Euler-Maruyama-discretize
-its underlying SDE correctly, exactly like `fields.brownian` does — a
+its underlying SDE correctly, exactly like `fields.white_noise_field` does — a
 stateless gain just ignores it, the same "ignore what you don't need"
 convention every field/profile already follows.
 
@@ -202,8 +202,8 @@ def ornstein_uhlenbeck(theta: float, sigma: float, mu: float = 0.0) -> Gain:
     """The canonical continuous-time mean-reverting stochastic process —
     the stochastic generalization of ``sine_gain``'s oscillation, and in
     gain-space the same shape as an ``exponential_confinement`` field plus
-    ``brownian`` noise. Euler-Maruyama discretized exactly like
-    ``fields.brownian``: ``x += -theta*(x - mu)*dt + sigma*sqrt(dt) *
+    white noise. Euler-Maruyama discretized exactly like
+    ``fields.white_noise_field``: ``x += -theta*(x - mu)*dt + sigma*sqrt(dt) *
     randn()`` — the ``sqrt(dt)`` diffusion term is what makes this converge
     to the right SDE as ``dt -> 0``, not a plain ``randn()`` scaled by
     ``dt``.

@@ -2,7 +2,7 @@
 and the REPL (background thread).
 
 Field-catalog membership, exposure, and dt are all plain attributes so the
-REPL can rebind them (e.g. ``sim.active_field_name = "brownian"`` or
+REPL can rebind them (e.g. ``sim.active_field_name = "white_noise"`` or
 ``sim.fields["radial"] = fields.radial_field(profile=fields.constant(-0.6))``)
 between frames
 without any locking: each attribute read/write is a single Python
@@ -45,8 +45,8 @@ class Simulation:
         self.state.step(self.active_field, self.t, self.dt, self.rng)
         self.t += self.dt
 
-    def reset(self, n: int | None = None, radius: float = 1.0) -> None:
-        """Reinitialize the particle population from a fresh uniform ball,
+    def reset(self, n: int | None = None, scale: float = 0.3) -> None:
+        """Reinitialize the particle population from a fresh Gaussian cloud,
         discarding current positions/velocities/wavelengths. The recovery
         path for a swarm that has wandered far off-screen or gone
         non-finite (see ``fields.py``'s ``exponential`` profile for one
@@ -55,8 +55,8 @@ class Simulation:
         current particle count.
         """
         n = self.state.n if n is None else n
-        self.state = ParticleState.uniform_ball(
-            n=n, rng=self.rng, spectrum=self.spectrum, dim=self.state.dim, radius=radius
+        self.state = ParticleState.gaussian(
+            n=n, rng=self.rng, spectrum=self.spectrum, dim=self.state.dim, scale=scale
         )
         self.detector.clear()
         self.t = 0.0

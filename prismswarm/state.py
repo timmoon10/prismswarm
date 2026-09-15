@@ -25,20 +25,18 @@ class ParticleState:
         return self.positions.shape[1]
 
     @classmethod
-    def uniform_ball(
+    def gaussian(
         cls,
         n: int,
         rng: np.random.Generator,
         spectrum: Spectrum,
         dim: int = 3,
-        radius: float = 1.0,
+        scale: float = 0.3,
     ) -> "ParticleState":
-        """Particles distributed uniformly by volume in a ``dim``-ball, with
+        """Particles distributed as an isotropic Gaussian cloud centered on
+        the origin, with per-axis standard deviation ``scale``, and
         wavelengths drawn from ``spectrum`` (see ``spectra.py``)."""
-        directions = rng.standard_normal((n, dim))
-        directions /= np.linalg.norm(directions, axis=1, keepdims=True)
-        radii = radius * rng.random(n) ** (1.0 / dim)
-        positions = (directions * radii[:, None]).astype(np.float32)
+        positions = (scale * rng.standard_normal((n, dim))).astype(np.float32)
         velocities = np.zeros((n, dim), dtype=np.float32)
         wavelengths = spectrum(n, rng).astype(np.float32)
         return cls(positions, velocities, wavelengths)

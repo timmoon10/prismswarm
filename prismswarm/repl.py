@@ -73,7 +73,7 @@ Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into 
                                 (median 1) — the safer default for a multiplicative gain
   gains.ornstein_uhlenbeck(theta, sigma, mu)
                                 stateful mean-reverting random walk (Euler-Maruyama, like
-                                fields.brownian); rests at mu=0 by default
+                                fields.white_noise_field); rests at mu=0 by default
   gains.telegraph(rate, low, high)
                                 stateful Poisson-interval switching between low/high (the
                                 stochastic analogue of square_gain)
@@ -102,9 +102,9 @@ Simulation state
                                 raw NumPy arrays, shape (n, dim) / (n, dim) / (n,)
   sim.detector.half_extent     world-space half-width mapped to the detector's pixel grid
   sim.rng                      shared numpy.random.Generator
-  sim.reset(n=None, radius=1.0)
-                                reinitialize the particle population from a fresh uniform
-                                ball (reusing sim.rng and sim.spectrum); recovers a swarm
+  sim.reset(n=None, scale=0.3)
+                                reinitialize the particle population from a fresh Gaussian
+                                cloud (reusing sim.rng and sim.spectrum); recovers a swarm
                                 that has wandered off-screen or gone non-finite (inf/nan)
                                 without restarting the process. If the render loop hits an
                                 error, its traceback prints to the console and the window

@@ -7,13 +7,13 @@ fluid flow field advecting passive tracers, rather than a force that
 accumulates into velocity over time. This is what makes stochastic,
 deterministic, and wavelength-coupled fields interoperable through a
 single interface: a deterministic field ignores ``rng``, a stochastic
-field (e.g. Brownian motion) ignores ``pos``/``vel``, a
+field (e.g. white noise) ignores ``pos``/``vel``, a
 wavelength-independent field ignores ``wavelength`` — every field in this
 module that doesn't explicitly couple to wavelength does exactly that, so
 wavelength coupling is strictly opt-in. ``dt`` is passed through
 explicitly (rather than baked into a field at construction time) because
 stochastic fields need it to produce a correctly scaled discretization of
-their underlying SDE — see ``brownian`` below.
+their underlying SDE — see ``white_noise_field`` below.
 
 Multiple fields compose by addition (``sum_fields``), since summing
 prescribed velocities is exactly how independent flows superpose.
@@ -350,22 +350,30 @@ def constant_field(velocity: Sequence[float] | None = None, dim: int = 3, rng: n
     return field
 
 
-def brownian(sigma: float = 1.0) -> Field:
-    """Brownian motion, discretized via Euler-Maruyama.
+def white_noise_field(sigma: float = 1.0, gain: Gain | None = None) -> Field:
+    """Velocity drawn fresh each step as i.i.d. Gaussian noise: uncorrelated
+    in time, so this is white noise at the velocity level. Integrating a
+    white-noise velocity produces Brownian motion in position — an
+    Euler-Maruyama discretization of the Wiener process, whose position
+    increment is ``dx = sigma * sqrt(dt) * randn()`` per step. To fit the
+    velocity-field interface (where the integrator computes ``x += v *
+    dt``), the field must return ``v = sigma / sqrt(dt) * randn()`` so that
+    ``v * dt`` recovers the correct increment. This velocity grows without
+    bound as ``dt -> 0``, which is expected: it reflects the
+    non-differentiability of Brownian paths, not a bug.
 
-    The Wiener process gives a position increment ``dx = sigma * sqrt(dt) *
-    randn()`` per step. To fit the velocity-field interface (where the
-    integrator computes ``x += v * dt``), the field must return
-    ``v = sigma / sqrt(dt) * randn()`` so that ``v * dt`` recovers the
-    correct increment. This velocity grows without bound as ``dt -> 0``,
-    which is expected: it reflects the non-differentiability of Brownian
-    paths, not a bug.
+    ``sigma`` is this field's one scalar knob, so ``gain`` (if given) scales
+    it exactly like ``constant``/``linear``/``exponential``'s ``gain``
+    scales theirs — e.g. ``gain=wavelength_power_law(exponent=-1)`` makes
+    shorter wavelengths diffuse faster, matching the photon-momentum
+    framing used elsewhere in the gain catalog.
     """
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        return (sigma / np.sqrt(dt) * rng.standard_normal(pos.shape)).astype(pos.dtype)
+        magnitude = sigma / np.sqrt(dt) if gain is None else sigma / np.sqrt(dt) * gain(wavelength, t, dt, rng)
+        return _as_velocity(rng.standard_normal(pos.shape), magnitude, pos.dtype)
 
     return field
 
