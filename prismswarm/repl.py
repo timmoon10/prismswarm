@@ -47,16 +47,43 @@ Fields
                                 frequency_gain/phase_gain scale their parameter before it enters sin
                                 (the same Gain in both reproduces the old lattice field's
                                 frequency-and-phase-together wavelength coupling — see fields.py)
-
-  fields.power_law_weight(reference_nm, exponent)
-                                a Gain: (wavelength / reference_nm) ** exponent, equal to 1 at
-                                reference_nm; exponent<0 favors short wavelengths, >0 favors long,
-                                0 is no modulation. Plug into any profile's gain hook, e.g.:
-                                  short_favored = fields.radial_field(
-                                      profile=fields.constant(-0.6, gain=fields.power_law_weight(exponent=-1.0)))
   fields.modulated(field, gain)
                                 rescale an already-built field's total output by gain, for when
                                 you don't/can't reach into its profile's own gain parameter
+
+Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into a profile's own
+  parameter (or into fields.modulated()); every constructor defaults to its own canonical,
+  zero-centered/zero-resting shape rather than one pre-tuned to "neutral at 1" — pass
+  center=1.0 (or mu=1.0, or low/high straddling 1) explicitly for that:
+  gains.wavelength_power_law(reference_nm, exponent)
+                                (wavelength / reference_nm) ** exponent, = 1 at reference_nm;
+                                exponent<0 favors short wavelengths (photon momentum p=h/λ), >0
+                                favors long, 0 is no modulation
+  gains.wavelength_gaussian(reference_nm, sigma_nm, amplitude)
+                                resonance/bandpass bump peaked at reference_nm, decaying to 0
+                                away from it (an absorption/emission lineshape)
+  gains.sine_gain(frequency, amplitude, phase, center)
+                                center + amplitude*sin(2*pi*frequency*t + phase); canonical
+                                center=0
+  gains.square_gain(frequency, amplitude, phase, center)
+                                like sine_gain but +/-1 switching at its zero crossings;
+                                center=amplitude=0.5 for a 0/1 gate
+  gains.gaussian_noise(sigma, center), gains.lognormal_noise(sigma)
+                                i.i.d. per call, no memory; lognormal_noise is always positive
+                                (median 1) — the safer default for a multiplicative gain
+  gains.ornstein_uhlenbeck(theta, sigma, mu)
+                                stateful mean-reverting random walk (Euler-Maruyama, like
+                                fields.brownian); rests at mu=0 by default
+  gains.telegraph(rate, low, high)
+                                stateful Poisson-interval switching between low/high (the
+                                stochastic analogue of square_gain)
+  gains.gain_product(*gains)
+                                combine gains by multiplying their outputs, e.g. a field
+                                that's both wavelength- and time-modulated
+
+  Example: fields.radial_field(profile=fields.constant(-0.6,
+    gain=gains.gain_product(gains.wavelength_power_law(exponent=-1.0),
+                             gains.sine_gain(frequency=0.2, center=1.0))))
 
 Exposure / display
   sim.exposure                 manual brightness gain (float, default 1.0),

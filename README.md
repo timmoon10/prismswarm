@@ -85,15 +85,13 @@ projections on the roadmap won't decompose this way and will implement
   `exponential_confinement`; `tangential_field(profile=linear(w))` is the
   old `rotational`; `axial_field(profile=sinusoidal(...))` is a
   single-wavevector plane wave.
-- A **gain** (`Gain = Callable[[wavelength, t, rng], array | float]`) is a
-  dimensionless multiplier a profile can fold into one of its own
-  parameters, always normalized so a gain of `1` (the default when none is
-  given) leaves the profile unchanged — `power_law_weight` already has this
-  property (it evaluates to exactly `1` at its reference wavelength), which
-  is what makes it pluggable into *any* profile's gain slot without needing
-  to know that slot's scale. Deliberately excluded from `Gain`'s inputs is
-  position: a position-dependent scalar would be redundant with the
-  geometry/coordinate step, which is already a function of position.
+- A **gain** (`Gain = Callable[[wavelength, t, dt, rng], array | float]`,
+  defined in `gains.py`) is an optional dimensionless multiplier a profile
+  can fold into one of its own parameters. Deliberately excluded from
+  `Gain`'s inputs is position: a position-dependent scalar would be
+  redundant with the geometry/coordinate step, which is already a function
+  of position. See "Gain catalog" below for the full vocabulary and its
+  design rationale.
 
 Which parameter a gain multiplies is decided by each profile, not by a
 single generic mechanism. `constant`, `linear`, and `exponential` each
@@ -140,25 +138,101 @@ Roadmap.
 *already-built* field's total output by a gain, for when you want to tune
 wavelength/time dependence from outside without reaching into a profile's
 own parameters — e.g. scaling an entire `sum_fields(...)` composition, or
-a field you didn't construct yourself. `power_law_weight` (the only
-`Gain` shipped so far, `(wavelength / reference_nm) ** exponent`) works
-identically whether it's plugged into a profile's `gain` parameter or into
-`modulated()`, since both consume the same `Gain` type. `exponent = -1` is
-physically grounded (photon momentum `p = h/λ` — shorter wavelengths
-genuinely push harder under radiation-pressure-like forcing); `exponent =
-+1` favors long wavelengths on a principled but not equally fundamental
-basis (e.g. a diffraction-flavored reading); `exponent = 0` recovers no
-modulation at all (same as omitting `gain`/`modulated` entirely).
+a field you didn't construct yourself. It consumes the same `Gain` type as
+every profile's gain parameter, so any constructor from the gain catalog
+below works identically in either place.
 
-A resonant/bandpass gain (Gaussian or Lorentzian, peaked at a target
-wavelength) was considered and is a legitimate physical model — it's the
-standard lineshape for a single absorption/emission resonance, the same
-mechanism that gives colored glass its color (a dopant ion's electronic
-transition). It's deliberately deferred: modeling multiple resonances well
-requires gain functions to compose by *multiplication* (matching
-Beer-Lambert absorption, where stacked absorbers multiply transmittances),
-which is a different composition rule than the addition used for fields
-themselves — worth its own design pass rather than bolting on now.
+### Gain catalog
+
+`gains.py` holds the `Gain` type and its constructors, kept separate from
+`fields.py` since the vocabulary (spectral, deterministic-temporal,
+stochastic, and stateful gains) is large enough to warrant its own module.
+`Gain = Callable[[wavelength, t, dt, rng], array | float]` — `dt` is
+carried for the same reason `Field` carries it: a stateful gain needs it
+to Euler-Maruyama-discretize its underlying SDE correctly (see below); a
+stateless gain just ignores it. Position is excluded, same reasoning as
+in "Structured fields" above.
+
+The catalog is organized around which of the three inputs — wavelength,
+t, rng — a gain actually reads, which also predicts what it's good for:
+
+- **Spectral** (wavelength only): `wavelength_power_law(reference_nm,
+  exponent)` — `(wavelength / reference_nm) ** exponent`, physically
+  grounded at `exponent = -1` (photon momentum `p = h/λ`: shorter
+  wavelengths push harder under radiation-pressure-like forcing);
+  `exponent = +1` favors long wavelengths on a principled but not equally
+  fundamental basis. `wavelength_gaussian(reference_nm, sigma_nm,
+  amplitude)` — a resonance/bandpass bump, the standard lineshape for a
+  single absorption/emission resonance (the mechanism that gives colored
+  glass its color). Previously deferred here pending a multiplicative
+  composition rule for stacking resonances — see `gain_product` below,
+  which supplies exactly that.
+- **Temporal, deterministic** (t only): `sine_gain(frequency, amplitude,
+  phase, center)` and `square_gain(frequency, amplitude, phase, center)`
+  — a smooth oscillation and a hard 50%-duty switch between two levels.
+- **Stochastic, memoryless** (rng only): `gaussian_noise(sigma, center)`
+  and `lognormal_noise(sigma)` — i.i.d. per call, no state. `lognormal_noise`
+  (`exp(sigma * randn())`) is the canonical choice for a multiplicative
+  gain: always positive, median exactly `1` at any `sigma`, and a factor
+  of `x` is as likely as `1/x` — the same relationship geometric Brownian
+  motion has to ordinary Brownian motion. `gaussian_noise` can flip the
+  sign of whatever it multiplies once `sigma` is large relative to
+  `center`; that's a deliberate opt-in, not this catalog's default.
+- **Stateful** (hold memory across calls): `ornstein_uhlenbeck(theta,
+  sigma, mu)` and `telegraph(rate, low, high)` — the stochastic
+  generalizations of `sine_gain` and `square_gain` respectively.
+  Ornstein-Uhlenbeck is the canonical continuous-time mean-reverting SDE
+  (`dx = -theta*(x - mu)*dt + sigma*sqrt(dt)*dW`, discretized exactly like
+  `fields.brownian`) — in gain-space, the same shape as an
+  `exponential_confinement` field plus `brownian` noise, composed instead
+  around a resting gain value. `telegraph` is the random telegraph
+  process / dichotomous Markov noise: switches between `low` and `high` at
+  Poisson-arrival times (rate `rate`) instead of a fixed period, the
+  standard model for e.g. ion channel gating.
+
+Every constructor defaults to its own mathematically canonical shape —
+`sine_gain`/`square_gain` zero-centered, `ornstein_uhlenbeck` resting at
+`mu=0`, `telegraph` switching around `0` — rather than one pre-tuned to
+"neutral at 1", which is a property of *using* a gain multiplicatively,
+not of the shape itself; an earlier draft defaulted `sine_gain` to
+`center=1` and it read as backward-engineered from the gain use case
+rather than a canonical atom. Pass `center=1.0` (or `mu=1.0`, or `low`/
+`high` straddling `1`) explicitly to get that. `lognormal_noise` and
+`wavelength_power_law` are the exceptions: their neutral-at-1 behavior is
+a structural consequence of their formulas (exponentiating a zero-mean
+Gaussian; evaluating a power law at its own reference point), not a tuned
+default, so neither needs a `center` parameter.
+
+Multiple gains combine via `gain_product(*gains)`, multiplying their
+outputs — the natural composition rule for dimensionless multipliers
+(matching Beer-Lambert absorption, where stacked absorbers multiply
+transmittances), and distinct from the addition `sum_fields` uses to
+compose `Field`s. This is what lets a profile's single gain slot be driven
+by more than one independent effect, e.g.
+`gain_product(wavelength_power_law(), sine_gain(frequency=0.5,
+center=1.0))` for a field that's both wavelength- and time-modulated. A
+generic pair of "lift" combinators (an affine `center + scale * signal`
+and a multiplicative `exp(scale * signal)`) were considered as a way to
+build every centered/rescaled variant from one canonical zero-centered
+atom, but rejected as premature abstraction: expressive, but verbose for
+what's actually needed today. Each constructor takes `center`/`amplitude`
+(or `mu`/`low`/`high`) directly instead; a generic lift can be added later
+if enough constructors end up wanting one to justify it.
+
+Stateful gains hold their state in a closure, which only works correctly
+if each call corresponds to a distinct forward step in time. That holds
+by default — every `Field`/`Profile` calls its children exactly once per
+`Simulation.step()`, and `Simulation.t` only ever advances — with one
+documented exception: `sinusoidal` explicitly supports passing the *same*
+`Gain` instance to both `frequency_gain` and `phase_gain`, which calls
+that instance twice within a single step. `gains._stateful` (the shared
+helper both `ornstein_uhlenbeck` and `telegraph` are built on) handles
+this by caching on `t`: a repeat call at a `t` it's already seen replays
+the cached value instead of advancing the state again, so sharing a
+stateful gain across multiple hooks is safe. Comparing `t` by exact
+float equality is safe here specifically because the same `float` is
+threaded unmodified through the whole call tree within one step — no
+floating-point drift can occur between the calls being deduplicated.
 
 ### Integration
 
@@ -220,10 +294,14 @@ Proposed module layout:
 - `prismswarm/fields.py` — the `Field` interface; geometry factories
   (`radial_field`, `tangential_field`, `axial_field`) and profiles
   (`constant`, `linear`, `exponential`, `sinusoidal`) that combine into
-  structured fields; `Gain`-based modulation (`power_law_weight`,
-  `modulated`); the standalone `constant_field` and `brownian`; and the
-  additive composition helper (`sum_fields`). See "Structured fields:
-  geometry × profile × gain" above.
+  structured fields; `modulated` for `Gain`-based modulation of a whole
+  field; the standalone `constant_field` and `brownian`; and the additive
+  composition helper (`sum_fields`). See "Structured fields: geometry ×
+  profile × gain" above.
+- `prismswarm/gains.py` — the `Gain` type and its constructor catalog
+  (spectral, deterministic-temporal, stochastic, and stateful), plus the
+  `gain_product` composition helper and the `_stateful` memoization helper
+  stateful gains are built on. See "Gain catalog" above.
 - `prismswarm/spectra.py` — the emission-spectrum interface (mirrors
   `fields.py`'s shape: `spectrum(n, rng) -> wavelengths_nm`), used at
   particle initialization. Implementations: monochrome, blackbody
@@ -309,11 +387,11 @@ influence the rest of the system).
   (done — defaults to the sun's ~5778K effective temperature, restricted
   to the visible range); white and discrete-RGB catalog entries later
 - Wavelength-dependent velocity field coupling (done): the `Field`
-  interface carries `wavelengths`; `power_law_weight` (a `Gain`) plugs into
-  any profile's gain parameter or into `modulated()` for short- or
-  long-wavelength-favoring coupling, composable with `sum_fields`.
-  Resonant/bandpass gain (deferred, see "Structured fields" above)
-  intentionally left for later.
+  interface carries `wavelengths`; the `gains.py` catalog (`Gain`
+  constructors — spectral, temporal, stochastic, and stateful, see "Gain
+  catalog" above) plugs into any profile's gain parameter or into
+  `modulated()`, composable with `sum_fields` and, within a single gain
+  slot, with `gain_product`.
 - Explicitly deferred within this milestone: dynamic per-particle spectra
   (random walks, explicit spectral conversion) — a later milestone once
   static spectra and field coupling are both working
@@ -322,12 +400,12 @@ influence the rest of the system).
 - Reworked the catalog from one-off named constructors into the
   geometry × profile × gain system (done — see "Structured fields" above):
   `radial_field`, `tangential_field`, `axial_field` geometries; `constant`,
-  `linear`, `exponential`, `sinusoidal` profiles; `power_law_weight` +
-  `modulated()` for wavelength/time-dependent gain. The old lattice-forming
-  sinusoidal field (a per-axis product of sines, geometrically distinct
-  from `axial_field`'s single-wavevector plane wave) was deleted rather
-  than kept alongside the new system — a deliberate prototype, not a
-  regression.
+  `linear`, `exponential`, `sinusoidal` profiles; the `gains.py` catalog +
+  `modulated()` for wavelength/time/stochastic gain (see "Gain catalog"
+  above). The old lattice-forming sinusoidal field (a per-axis product of
+  sines, geometrically distinct from `axial_field`'s single-wavevector
+  plane wave) was deleted rather than kept alongside the new system — a
+  deliberate prototype, not a regression.
 - Still to add: Perlin noise, rectilinear, stereographic projections of
   Hopf fibers
 - Exercise field composition (addition) now that multiple fields exist

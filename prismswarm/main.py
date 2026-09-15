@@ -7,7 +7,7 @@ import argparse
 
 import numpy as np
 
-from . import fields, render, repl, spectra
+from . import fields, gains, render, repl, spectra
 from .detector import Detector
 from .simulation import Simulation
 from .state import ParticleState
@@ -61,7 +61,7 @@ def main(argv: list[str] | None = None) -> None:
         exposure=args.exposure,
     )
 
-    repl.start(namespace=dict(sim=sim, fields=fields, spectra=spectra, np=np))
+    repl.start(namespace=dict(sim=sim, fields=fields, gains=gains, spectra=spectra, np=np))
 
     render.run(sim, display_size=(args.display_size, args.display_size), target_fps=args.fps)
 

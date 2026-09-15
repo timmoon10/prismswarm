@@ -29,10 +29,14 @@ factoring of the common case, not a shape every field must fit:
 - A *profile* (``constant``, ``linear``, ``exponential``, ``sinusoidal``)
   is a scalar-to-scalar shape function applied to that coordinate to get
   a magnitude.
-- A *gain* (``Gain``) is an optional dimensionless multiplier, resolved
-  from wavelength/time/randomness, that a profile folds into one of its
-  own parameters — never into position, since a position-dependent
-  multiplier would just duplicate what the geometry step already does.
+- A *gain* (``Gain``, see ``gains.py``) is an optional dimensionless
+  multiplier, resolved from wavelength/time/randomness, that a profile
+  folds into one of its own parameters — never into position, since a
+  position-dependent multiplier would just duplicate what the geometry
+  step already does. The gain catalog and composition rules live in
+  ``gains.py``, not here, since it's a large enough vocabulary (spectral,
+  deterministic-temporal, stochastic, and stateful gains) to warrant its
+  own module.
 """
 
 from __future__ import annotations
@@ -41,12 +45,13 @@ from typing import Callable, Sequence
 
 import numpy as np
 
+from .gains import Gain
+
 Field = Callable[
     [np.ndarray, np.ndarray, np.ndarray, float, float, np.random.Generator],
     np.ndarray,
 ]
 Profile = Callable[[np.ndarray, np.ndarray, float, float, np.random.Generator], np.ndarray]
-Gain = Callable[[np.ndarray, float, np.random.Generator], "np.ndarray | float"]
 
 _DEFAULT_SOFTENING = 1e-6
 _MAX_EXPONENT = 0.5 * float(np.log(np.finfo(np.float32).max))
@@ -90,7 +95,7 @@ def constant(value: float = 1.0, gain: Gain | None = None) -> Profile:
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        return value * gain(wavelength, t, rng)
+        return value * gain(wavelength, t, dt, rng)
 
     return profile
 
@@ -108,7 +113,7 @@ def linear(slope: float = 1.0, gain: Gain | None = None) -> Profile:
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        return slope * coordinate * gain(wavelength, t, rng)
+        return slope * coordinate * gain(wavelength, t, dt, rng)
 
     return profile
 
@@ -147,7 +152,7 @@ def exponential(
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        return amplitude * np.expm1(np.minimum(rate * coordinate, max_exponent)) * gain(wavelength, t, rng)
+        return amplitude * np.expm1(np.minimum(rate * coordinate, max_exponent)) * gain(wavelength, t, dt, rng)
 
     return profile
 
@@ -189,10 +194,10 @@ def sinusoidal(
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        freq = two_pi_f if frequency_gain is None else two_pi_f * frequency_gain(wavelength, t, rng)
-        ph = phase if phase_gain is None else phase * phase_gain(wavelength, t, rng)
+        freq = two_pi_f if frequency_gain is None else two_pi_f * frequency_gain(wavelength, t, dt, rng)
+        ph = phase if phase_gain is None else phase * phase_gain(wavelength, t, dt, rng)
         out = amplitude * np.sin(freq * coordinate + ph)
-        return out if amplitude_gain is None else out * amplitude_gain(wavelength, t, rng)
+        return out if amplitude_gain is None else out * amplitude_gain(wavelength, t, dt, rng)
 
     return profile
 
@@ -397,32 +402,6 @@ def modulated(field: Field, gain: Gain) -> Field:
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
         base = field(pos, vel, wavelength, t, dt, rng)
-        return _as_velocity(base, gain(wavelength, t, rng), pos.dtype)
+        return _as_velocity(base, gain(wavelength, t, dt, rng), pos.dtype)
 
     return coupled
-
-
-def power_law_weight(reference_nm: float = 530.0, exponent: float = -1.0) -> Gain:
-    """``(wavelength / reference_nm) ** exponent`` — a ``Gain``: it
-    evaluates to exactly ``1`` at ``reference_nm``, which is what makes it
-    usable in any profile's gain hook (``gain``, or ``sinusoidal``'s
-    ``amplitude_gain``/``frequency_gain``/``phase_gain``) or with
-    ``modulated()`` interchangeably, without any of them needing to know
-    its scale.
-
-    ``exponent = -1`` is physically grounded: photon momentum ``p = h/λ``
-    is inversely proportional to wavelength, so if the modulated field
-    represents radiation-pressure-like forcing, shorter wavelengths
-    physically do push harder. ``exponent = +1`` favors long wavelengths
-    instead — not backed by the same fundamental law, but a principled and
-    equally tunable choice on its own terms (e.g. as a diffraction-flavored
-    metaphor: diffraction angle scales with wavelength, so longer
-    wavelengths could be read as coupling more strongly to a field's
-    spatial structure). ``exponent = 0`` recovers a gain of ``1``
-    everywhere, i.e. no modulation.
-    """
-
-    def gain(wavelength: np.ndarray, t: float, rng: np.random.Generator) -> np.ndarray:
-        return (wavelength / reference_nm) ** exponent
-
-    return gain
