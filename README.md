@@ -287,8 +287,20 @@ presentation-layer concern.
 3. The accumulated XYZ buffer is converted to linear sRGB via the standard
    CIE XYZ→sRGB (D65) matrix.
 4. Out-of-gamut handling: monochromatic spectral-locus colors fall outside
-   the sRGB gamut, producing negative components. Policy (clip vs.
-   desaturate toward white) is an open question — see below.
+   the sRGB gamut, producing negative linear-sRGB components — no triangle
+   spanned by 3 real (non-negative-power) primaries can contain the full,
+   convex curve of spectral colors, so some part of that curve always
+   falls outside any 3-primary gamut, sRGB's included. Rather than
+   clipping the negative component away (discarding real color
+   information), it's desaturated toward white: mixed with white by just
+   enough to bring every channel to `>= 0`, which is the standard
+   technique for rendering the spectral locus into a limited gamut. This
+   narrows the practical cost (measured peak-channel contrast between
+   "primary-like" and "in-between" wavelengths across the visible range
+   drops from ~5.9x to ~4.0x) but can't eliminate it: the rendered colors
+   are still less saturated than the true spectral colors an eye sees
+   directly, the same way a photograph of a rainbow looks on an sRGB
+   monitor. See `color._desaturate_to_white`.
 5. Exposure normalization / tonemapping, then the sRGB OETF (gamma) for
    the final display buffer, which may sit at a different resolution than
    the detector. Particle density varies hugely across a frame and across
@@ -383,7 +395,7 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
   (not summed yet)
 - Orthographic projection; detector buffer decoupled from display
   resolution
-- CIE XYZ→sRGB pipeline with gamut clipping and manual + adaptive
+- CIE XYZ→sRGB pipeline with gamut mapping and manual + adaptive
   exposure normalization
 - pygame display window, real-time loop at ~1M particles
 - Terminal REPL for live control, with a `sim_help()` usage guide
@@ -452,8 +464,3 @@ influence the rest of the system).
   non-starter at this scale)
 - Force-based dynamics (e.g. Verlet) as an alternative to velocity-field
   integration
-
-## Open design questions
-
-- Gamut-mapping policy for out-of-gamut spectral colors (clip vs.
-  desaturate) — likely needs visual experimentation to settle.

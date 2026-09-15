@@ -57,6 +57,36 @@ def _linear_to_srgb(c: np.ndarray) -> np.ndarray:
     return np.where(c <= 0.0031308, c * 12.92, 1.055 * np.power(c, 1.0 / 2.4) - 0.055)
 
 
+def _desaturate_to_white(linear: np.ndarray) -> np.ndarray:
+    """Pull an out-of-gamut linear-sRGB color toward white just far enough
+    that every channel clears zero, rather than discarding whichever
+    channel(s) went negative.
+
+    No triangle spanned by 3 real (non-negative-power) primaries can
+    contain the full curve of monochromatic spectral colors — that curve
+    is convex, so any inscribed triangle leaves gaps between its edges and
+    the curve, regardless of which 3 primaries are chosen. sRGB's
+    negative components are exactly those gaps: real, physically
+    meaningful color information that sRGB's 3 fixed primaries cannot
+    reproduce, not noise to be thrown away.
+
+    For each channel ``c``, mixing toward white ``w=1`` gives ``c + t*(1 -
+    c)``, which is increasing in ``t`` for any ``c < 1`` and equals ``0``
+    at ``t = c / (c - 1)``. Taking the largest such ``t`` across a pixel's
+    negative channels and applying it to all three channels together (so
+    hue shifts uniformly, not just the offending channel) guarantees every
+    channel clears zero simultaneously. This is the standard technique for
+    rendering the spectral locus in a limited display gamut; it narrows
+    the visible cost of the mismatch but can't eliminate it — the
+    resulting colors are still less saturated than the true spectral
+    colors an eye sees directly, exactly as a photograph of a rainbow
+    reproduced on an sRGB monitor is.
+    """
+    needed = np.where(linear < 0.0, linear / (linear - 1.0), 0.0)
+    t = needed.max(axis=-1, keepdims=True)
+    return linear + t * (1.0 - linear)
+
+
 def tonemap(
     xyz_buffer: np.ndarray,
     exposure: float = 1.0,
@@ -65,27 +95,25 @@ def tonemap(
 ) -> np.ndarray:
     """Detector XYZ accumulation buffer -> displayable uint8 sRGB.
 
-    Gamut handling is the simplest possible policy: negative linear-sRGB
-    components (monochromatic light falls outside the sRGB gamut) are
-    clipped to zero rather than desaturated. This is a placeholder — see
-    the README's open design questions — chosen because it's cheap and
-    doesn't hide the pipeline's correctness while more interesting policies
-    are explored later.
+    Out-of-gamut colors (monochromatic spectral-locus wavelengths fall
+    outside the sRGB gamut, producing negative linear-sRGB components) are
+    desaturated toward white rather than clipped — see
+    ``_desaturate_to_white`` for the technique and why clipping would
+    throw away real color information instead of just losing saturation.
 
     When ``adaptive`` is set, brightness is normalized per frame: the
-    ``percentile`` (of nonzero, gamut-clipped linear channel values —
-    zeros from empty background pixels would otherwise swamp anything
-    below roughly the image's fill fraction) is scaled to hit full
-    brightness. ``percentile=100`` is a literal "brightest pixel channel
-    maps to white"; the default of 99.5 trades a few blown-out outlier
-    pixels for a brighter overall image, since a single hot pixel
-    otherwise dictates the whole frame's exposure. ``exposure`` is always
-    applied too, as a manual gain on top of whatever normalization (or
-    lack of it) precedes it — the two combine rather than being
-    alternatives.
+    ``percentile`` (of nonzero linear channel values — zeros from empty
+    background pixels would otherwise swamp anything below roughly the
+    image's fill fraction) is scaled to hit full brightness.
+    ``percentile=100`` is a literal "brightest pixel channel maps to
+    white"; the default of 99.5 trades a few blown-out outlier pixels for
+    a brighter overall image, since a single hot pixel otherwise dictates
+    the whole frame's exposure. ``exposure`` is always applied too, as a
+    manual gain on top of whatever normalization (or lack of it) precedes
+    it — the two combine rather than being alternatives.
     """
     linear = xyz_to_linear_srgb(xyz_buffer)
-    linear = np.clip(linear, 0.0, None)
+    linear = _desaturate_to_white(linear)
     if adaptive:
         nonzero = linear[linear > 0]
         if nonzero.size > 0:
