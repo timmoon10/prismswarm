@@ -16,8 +16,8 @@ Every gain here defaults to its own mathematically canonical form —
 resting at/switching around `0`, `wavelength_gaussian` peaking at
 `amplitude` and decaying to `0` — rather than one pre-tuned to "neutral at
 1", which is a property of *using* a gain multiplicatively, not a property
-of the shape itself. Pass `center=1.0` (or `mu=1.0`, or `low`/`high`
-straddling `1`) explicitly to get that. `lognormal_noise` is the one
+of the shape itself. Pass `center=1.0` (or `low`/`high` straddling `1`)
+explicitly to get that. `lognormal_noise` is the one
 exception: median-1 isn't a tuned default there, it's a structural
 consequence of exponentiating a zero-mean Gaussian, so it needs no
 `center` parameter at all. `wavelength_power_law` also evaluates to
@@ -130,30 +130,47 @@ def wavelength_gaussian(reference_nm: float = 530.0, sigma_nm: float = 50.0, amp
 
 
 def sine_gain(frequency: float, amplitude: float = 1.0, phase: float = 0.0, center: float = 0.0) -> Gain:
-    """``center + amplitude * sin(2*pi*frequency*t + phase)``. Defaults to
-    the canonical sine wave — zero-centered, unit amplitude — rather than
-    one pre-tuned to a gain's "neutral at 1" convention; pass ``center=1.0``
-    explicitly to idle at 1 and swing symmetrically around it.
+    """``center + amplitude * sin(2*pi*(frequency*t + phase))``. Defaults
+    to the canonical sine wave — zero-centered, unit amplitude — rather
+    than one pre-tuned to a gain's "neutral at 1" convention; pass
+    ``center=1.0`` explicitly to idle at 1 and swing symmetrically around
+    it.
+
+    ``frequency`` and ``phase`` are both in cycles, not radians:
+    ``frequency`` is oscillations per unit ``t``, and ``phase`` is a
+    fractional offset of one period (``phase=0.25`` is a quarter-period
+    shift), so they combine by plain addition before the one conversion
+    to radians ``sin`` needs — see ``fields.sinusoidal``, which shares
+    this convention and the reasoning behind it.
     """
-    two_pi_f = 2.0 * np.pi * frequency
+    omega = 2.0 * np.pi * frequency
+    phase_rad = 2.0 * np.pi * phase
 
     def gain(wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator) -> float:
-        return center + amplitude * np.sin(two_pi_f * t + phase)
+        return center + amplitude * np.sin(omega * t + phase_rad)
 
     return gain
 
 
 def square_gain(frequency: float, amplitude: float = 1.0, phase: float = 0.0, center: float = 0.0) -> Gain:
-    """``center +/- amplitude``, switching at ``sine_gain``'s zero
-    crossings. Defaults to the canonical +/-1 square wave (``center=0``,
-    ``amplitude=1``) — zero-mean, matching ``sine_gain``'s convention —
-    rather than the 0/1 rectified form; pass ``center=amplitude=0.5`` for
-    that instead.
+    """``center +/- amplitude``, switching at the start of each half-period
+    (i.e. wherever ``sine_gain`` would cross zero, without depending on
+    ``sin`` to find that point — a square wave is defined by its duty
+    cycle, not by a trig identity). Defaults to the canonical +/-1 square
+    wave (``center=0``, ``amplitude=1``) — zero-mean, matching
+    ``sine_gain``'s convention — rather than the 0/1 rectified form; pass
+    ``center=amplitude=0.5`` for that instead.
+
+    ``frequency`` and ``phase`` are in cycles, matching ``sine_gain`` (and
+    ``fields.sinusoidal``): ``phase=0.25`` shifts the switch times by a
+    quarter-period. Computed as the fractional part of ``frequency*t +
+    phase`` — the first half of each period (``[0, 0.5)``) is high, the
+    second (``[0.5, 1)``) is low.
     """
-    two_pi_f = 2.0 * np.pi * frequency
 
     def gain(wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator) -> float:
-        sign = 1.0 if np.sin(two_pi_f * t + phase) >= 0.0 else -1.0
+        cycle_position = (frequency * t + phase) % 1.0
+        sign = 1.0 if cycle_position < 0.5 else -1.0
         return center + amplitude * sign
 
     return gain
@@ -198,19 +215,23 @@ def lognormal_noise(sigma: float = 0.1) -> Gain:
 # --- Stateful: hold memory across calls -----------------------------------
 
 
-def ornstein_uhlenbeck(theta: float, sigma: float, mu: float = 0.0) -> Gain:
+def ornstein_uhlenbeck(theta: float, sigma: float, center: float = 0.0) -> Gain:
     """The canonical continuous-time mean-reverting stochastic process —
     the stochastic generalization of ``sine_gain``'s oscillation, and in
-    gain-space the same shape as an ``exponential_confinement`` field plus
-    white noise. Euler-Maruyama discretized exactly like
-    ``fields.white_noise_field``: ``x += -theta*(x - mu)*dt + sigma*sqrt(dt) *
-    randn()`` — the ``sqrt(dt)`` diffusion term is what makes this converge
-    to the right SDE as ``dt -> 0``, not a plain ``randn()`` scaled by
-    ``dt``.
+    gain-space the same shape as an ``exponential_ramp``-confined field
+    plus white noise. Euler-Maruyama discretized exactly like
+    ``fields.white_noise_field``: ``x += -theta*(x - center)*dt +
+    sigma*sqrt(dt) * randn()`` (``center`` is this process's usual ``mu``
+    in the standard SDE notation, renamed here to match
+    ``sine_gain``/``square_gain``/``gaussian_noise``'s convention for the
+    same resting-value role) — the ``sqrt(dt)`` diffusion term is what
+    makes this converge to the right SDE as ``dt -> 0``, not a plain
+    ``randn()`` scaled by ``dt``.
 
-    Rests at ``mu=0`` by default — the process's own natural resting
-    point, not backward-engineered from gain usage — so pass ``mu=1.0`` to
-    idle at a gain's neutral value. Starts at ``x = mu``.
+    Rests at ``center=0`` by default — the process's own natural resting
+    point, not backward-engineered from gain usage — so pass
+    ``center=1.0`` to idle at a gain's neutral value. Starts at ``x =
+    center``.
 
     Stateful (see the module docstring and ``_stateful``): safe to call
     more than once at the same ``t``, but don't share one instance across
@@ -219,10 +240,10 @@ def ornstein_uhlenbeck(theta: float, sigma: float, mu: float = 0.0) -> Gain:
     """
 
     def step(x: float, t: float, dt: float, rng: np.random.Generator) -> tuple[float, float]:
-        x_new = x - theta * (x - mu) * dt + sigma * np.sqrt(dt) * rng.standard_normal()
+        x_new = x - theta * (x - center) * dt + sigma * np.sqrt(dt) * rng.standard_normal()
         return x_new, x_new
 
-    return _stateful(step, init=mu)
+    return _stateful(step, init=center)
 
 
 def telegraph(rate: float, low: float = -1.0, high: float = 1.0) -> Gain:

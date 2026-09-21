@@ -70,24 +70,33 @@ projections on the roadmap won't decompose this way and will implement
   default to or assume the coordinate axes, so a linear field pushing along
   one direction while varying with position along a *different* one (a
   shear flow) is a first-class case, not a special one.
-- A **profile** (`constant`, `linear`, `exponential`, `sinusoidal`) is a
-  plain scalar→scalar shape function applied to the coordinate, giving the
-  field's magnitude. Every profile's scale parameter (`constant`'s
-  `value`, `linear`'s `slope`, `exponential`'s `amplitude`, `sinusoidal`'s
-  `amplitude`) defaults to `1` — the profile unscaled, with no bias toward
-  either sign. That matters because a radially-symmetric vector field is,
-  in general, `f(r) * direction` for *any* signed `f` (gravity is `f(r) <
-  0`, Coulomb repulsion between like charges is `f(r) > 0`), so with
-  `radial_field` (outward `direction`), a negative scale pulls inward and
-  a positive one pushes outward — neither is a special case, and the
-  default deliberately doesn't favor one over the other just because one
-  of them happens to match a familiar use case (confinement, in this
-  case) — see `constant`'s and `exponential`'s docstrings. Concretely:
-  `radial_field(profile=constant(-1.0))` is the old `radial_inward`;
-  `radial_field(profile=exponential(amplitude=-1.0))` is the old
-  `exponential_confinement`; `tangential_field(profile=linear(w))` is the
-  old `rotational`; `axial_field(profile=sinusoidal(...))` is a
-  single-wavevector plane wave.
+- A **profile** (`constant`, `linear`, `exponential`, `exponential_ramp`,
+  `sinusoidal`) is a plain scalar→scalar shape function applied to the
+  coordinate, giving the field's magnitude. Every profile's scale
+  parameter (`constant`'s `value`, `linear`'s `slope`, `exponential`'s and
+  `exponential_ramp`'s `amplitude`, `sinusoidal`'s `amplitude`) defaults
+  to `1` — the profile unscaled, with no bias toward either sign. That
+  matters because a radially-symmetric vector field is, in general, `f(r)
+  * direction` for *any* signed `f` (gravity is `f(r) < 0`, Coulomb
+  repulsion between like charges is `f(r) > 0`), so with `radial_field`
+  (outward `direction`), a negative scale pulls inward and a positive one
+  pushes outward — neither is a special case, and the default
+  deliberately doesn't favor one over the other just because one of them
+  happens to match a familiar use case (confinement, in this case) — see
+  `constant`'s and `exponential`'s docstrings. `exponential` and
+  `exponential_ramp` are the same growth curve at two different anchor
+  points: `exponential` equals `amplitude` at `coordinate = 0` and grows
+  (or decays) from there, never crossing zero; `exponential_ramp` is
+  shifted down by `amplitude` so it vanishes at `coordinate = 0` instead —
+  the exponential analogue of `linear` (which also passes through the
+  origin) rather than of `constant`. Concretely: `radial_field(profile=
+  constant(-1.0))` is the old `radial_inward`; `radial_field(profile=
+  exponential_ramp(amplitude=-1.0))` is the old `exponential_confinement`
+  (its center-anchored zero is what made it suitable for confinement in
+  the first place — plain `exponential` would instead pull at full
+  `amplitude` on a particle sitting exactly at `center`); `tangential_field
+  (profile=linear(w))` is the old `rotational`; `axial_field(profile=
+  sinusoidal(...))` is a single-wavevector plane wave.
 - A **gain** (`Gain = Callable[[wavelength, t, dt, rng], array | float]`,
   defined in `gains.py`) is an optional dimensionless multiplier a profile
   can fold into one of its own parameters. Deliberately excluded from
@@ -97,24 +106,30 @@ projections on the roadmap won't decompose this way and will implement
   design rationale.
 
 Which parameter a gain multiplies is decided by each profile, not by a
-single generic mechanism. `constant`, `linear`, and `exponential` each
-have exactly one scalar knob, so its gain is unambiguously named `gain`.
-`sinusoidal` has three independent knobs worth modulating — amplitude,
-frequency, phase — so it names each hook after the parameter it touches
-(`amplitude_gain`, `frequency_gain`, `phase_gain`) instead of overloading
-a single `gain` to mean something different from what it means everywhere
-else in the module: `amplitude_gain` scales the output like the other
-profiles' `gain`, while `frequency_gain`/`phase_gain` scale their
-parameter *before* it enters `sin`, since that's the only way a modulator
-can shift *where* the wave's zeros land (e.g. a per-particle wavelength
-setting the lattice spacing) — scaling the output can't reproduce that.
-Passing the same `Gain` to both `frequency_gain` and `phase_gain`
-reproduces the deleted lattice field's single wavelength-dependent factor
-scaling frequency and phase together; passing it to only one modulates
-that one alone. Each profile factory resolves its gain parameters once,
-at construction time, into a closure with no gain-related branching or
-array allocation when none are given; the "no modulation" case costs
-exactly what it did before this system existed.
+single generic mechanism. `constant`, `linear`, `exponential`, and
+`exponential_ramp` each have exactly one scalar knob, so its gain is
+unambiguously named `gain`. `sinusoidal` has three independent knobs
+worth modulating — amplitude, frequency, phase — so it names each hook
+after the parameter it touches (`amplitude_gain`, `frequency_gain`,
+`phase_gain`) instead of overloading a single `gain` to mean something
+different from what it means everywhere else in the module:
+`amplitude_gain` scales the output like the other profiles' `gain`, while
+`frequency_gain`/`phase_gain` scale their parameter *before* it enters
+`sin`, since that's the only way a modulator can shift *where* the wave's
+zeros land (e.g. a per-particle wavelength setting the lattice spacing) —
+scaling the output can't reproduce that. `frequency` and `phase` are both
+expressed in cycles rather than radians (`phase = 0.25` is a
+quarter-period shift), so the two combine by plain addition before the
+one conversion to radians `sin` needs, and `frequency_gain`/`phase_gain`
+scale genuinely equivalent, same-unit quantities rather than one already-
+converted value and one not. Passing the same `Gain` to both
+`frequency_gain` and `phase_gain` reproduces the deleted lattice field's
+single wavelength-dependent factor scaling frequency and phase together;
+passing it to only one modulates that one alone. Each profile factory
+resolves its gain parameters once, at construction time, into a closure
+with no gain-related branching or array allocation when none are given;
+the "no modulation" case costs exactly what it did before this system
+existed.
 
 The same convention extends to `white_noise_field`, which isn't built
 from a geometry × profile at all — it's a standalone `Field`, like
@@ -183,7 +198,16 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   which supplies exactly that.
 - **Temporal, deterministic** (t only): `sine_gain(frequency, amplitude,
   phase, center)` and `square_gain(frequency, amplitude, phase, center)`
-  — a smooth oscillation and a hard 50%-duty switch between two levels.
+  — a smooth oscillation and a hard 50%-duty switch between two levels,
+  `center + amplitude*sin(2*pi*(frequency*t + phase))` and its duty-cycle
+  analogue. `frequency` (periods per unit `t`) and `phase` (fraction of a
+  period) are both in cycles for the same reason `fields.sinusoidal`'s
+  are — see "Structured fields" above — which matters especially for
+  `square_gain`: a square wave's phase is a fraction-of-period offset by
+  definition, not an angle, so radians would be a borrowed unit rather
+  than the natural one. `square_gain` is computed directly from the
+  fractional part of `frequency*t + phase`, not from the sign of `sin`, so
+  it has no dependency on trigonometry at all.
 - **Stochastic, memoryless** (rng only): `gaussian_noise(sigma, center)`
   and `lognormal_noise(sigma)` — i.i.d. per call, no state. `lognormal_noise`
   (`exp(sigma * randn())`) is the canonical choice for a multiplicative
@@ -193,25 +217,27 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   sign of whatever it multiplies once `sigma` is large relative to
   `center`; that's a deliberate opt-in, not this catalog's default.
 - **Stateful** (hold memory across calls): `ornstein_uhlenbeck(theta,
-  sigma, mu)` and `telegraph(rate, low, high)` — the stochastic
+  sigma, center)` and `telegraph(rate, low, high)` — the stochastic
   generalizations of `sine_gain` and `square_gain` respectively.
   Ornstein-Uhlenbeck is the canonical continuous-time mean-reverting SDE
-  (`dx = -theta*(x - mu)*dt + sigma*sqrt(dt)*dW`, discretized exactly like
-  `fields.white_noise_field`) — in gain-space, the same shape as an
-  `exponential_confinement` field plus white noise, composed instead
-  around a resting gain value. `telegraph` is the random telegraph
-  process / dichotomous Markov noise: switches between `low` and `high` at
-  Poisson-arrival times (rate `rate`) instead of a fixed period, the
-  standard model for e.g. ion channel gating.
+  (`dx = -theta*(x - center)*dt + sigma*sqrt(dt)*dW` — `center` plays the
+  role the standard SDE notation calls `mu`, renamed to match `sine_gain`/
+  `square_gain`/`gaussian_noise`'s convention for the same resting-value
+  role — discretized exactly like `fields.white_noise_field`) — in
+  gain-space, the same shape as an `exponential_ramp`-confined field plus
+  white noise, composed instead around a resting gain value. `telegraph`
+  is the random telegraph process / dichotomous Markov noise: switches
+  between `low` and `high` at Poisson-arrival times (rate `rate`) instead
+  of a fixed period, the standard model for e.g. ion channel gating.
 
 Every constructor defaults to its own mathematically canonical shape —
 `sine_gain`/`square_gain` zero-centered, `ornstein_uhlenbeck` resting at
-`mu=0`, `telegraph` switching around `0` — rather than one pre-tuned to
-"neutral at 1", which is a property of *using* a gain multiplicatively,
+`center=0`, `telegraph` switching around `0` — rather than one pre-tuned
+to "neutral at 1", which is a property of *using* a gain multiplicatively,
 not of the shape itself; an earlier draft defaulted `sine_gain` to
 `center=1` and it read as backward-engineered from the gain use case
-rather than a canonical atom. Pass `center=1.0` (or `mu=1.0`, or `low`/
-`high` straddling `1`) explicitly to get that. `lognormal_noise` and
+rather than a canonical atom. Pass `center=1.0` (or `low`/`high`
+straddling `1`) explicitly to get that. `lognormal_noise` and
 `wavelength_power_law` are the exceptions: their neutral-at-1 behavior is
 a structural consequence of their formulas (exponentiating a zero-mean
 Gaussian; evaluating a power law at its own reference point), not a tuned
@@ -230,8 +256,8 @@ and a multiplicative `exp(scale * signal)`) were considered as a way to
 build every centered/rescaled variant from one canonical zero-centered
 atom, but rejected as premature abstraction: expressive, but verbose for
 what's actually needed today. Each constructor takes `center`/`amplitude`
-(or `mu`/`low`/`high`) directly instead; a generic lift can be added later
-if enough constructors end up wanting one to justify it.
+(or `low`/`high`) directly instead; a generic lift can be added later if
+enough constructors end up wanting one to justify it.
 
 Stateful gains hold their state in a closure, which only works correctly
 if each call corresponds to a distinct forward step in time. That holds
@@ -319,10 +345,11 @@ Proposed module layout:
 
 - `prismswarm/fields.py` — the `Field` interface; geometry factories
   (`radial_field`, `tangential_field`, `axial_field`) and profiles
-  (`constant`, `linear`, `exponential`, `sinusoidal`) that combine into
-  structured fields; `modulated` for `Gain`-based modulation of a whole
-  field; the standalone `constant_field` and `white_noise_field`; and the additive
-  composition helper (`sum_fields`). See "Structured fields: geometry ×
+  (`constant`, `linear`, `exponential`, `exponential_ramp`, `sinusoidal`)
+  that combine into structured fields; `modulated` for `Gain`-based
+  modulation of a whole field; the standalone `constant_field` and
+  `white_noise_field`; and the additive composition helper (`sum_fields`).
+  See "Structured fields: geometry ×
   profile × gain" above.
 - `prismswarm/gains.py` — the `Gain` type and its constructor catalog
   (spectral, deterministic-temporal, stochastic, and stateful), plus the
@@ -426,7 +453,8 @@ influence the rest of the system).
 - Reworked the catalog from one-off named constructors into the
   geometry × profile × gain system (done — see "Structured fields" above):
   `radial_field`, `tangential_field`, `axial_field` geometries; `constant`,
-  `linear`, `exponential`, `sinusoidal` profiles; the `gains.py` catalog +
+  `linear`, `exponential`, `exponential_ramp`, `sinusoidal` profiles; the
+  `gains.py` catalog +
   `modulated()` for wavelength/time/stochastic gain (see "Gain catalog"
   above). The old lattice-forming sinusoidal field (a per-axis product of
   sines, geometrically distinct from `axial_field`'s single-wavevector

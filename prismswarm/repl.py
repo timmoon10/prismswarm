@@ -35,18 +35,25 @@ Fields
   fields.tangential_field(profile, center, plane_axes, softening)
                                 direction is tangential within plane_axes (default: view plane);
                                 e.g. fields.tangential_field(profile=fields.linear(1.0)) is rigid rotation
-  fields.axial_field(profile, axis, direction, anchor, dim, rng)
-                                direction is fixed (defaults to axis); coordinate is dot(axis, x - anchor)
+  fields.axial_field(profile, axis, direction, center, dim, rng)
+                                direction is fixed (defaults to axis); coordinate is dot(axis, x - center)
   fields.constant(value, gain), fields.linear(slope, gain),
-  fields.exponential(rate, amplitude, gain)
+  fields.exponential(rate, amplitude, gain), fields.exponential_ramp(rate, amplitude, gain)
                                 profiles: coordinate -> magnitude. gain (a Gain, see below) scales
-                                the profile's one scalar knob (value/slope/amplitude)
+                                the profile's one scalar knob (value/slope/amplitude). exponential
+                                never vanishes (amplitude at coordinate=0); exponential_ramp is the
+                                same shape shifted to vanish at coordinate=0, e.g. for a
+                                radial_field confinement that doesn't yank a centered particle
   fields.sinusoidal(frequency, phase, amplitude, amplitude_gain, frequency_gain, phase_gain)
-                                has three knobs, so each gets its own named hook instead of one
+                                frequency (periods per unit coordinate) and phase (fraction of a
+                                period, e.g. phase=0.25 is a quarter-turn) are both in cycles, so
+                                they combine by addition before the one conversion sin needs.
+                                Has three knobs, so each gets its own named hook instead of one
                                 ambiguous gain: amplitude_gain scales the output like the others do;
-                                frequency_gain/phase_gain scale their parameter before it enters sin
-                                (the same Gain in both reproduces the old lattice field's
-                                frequency-and-phase-together wavelength coupling — see fields.py)
+                                frequency_gain/phase_gain scale their (cycles-valued) parameter
+                                before it enters sin (the same Gain in both reproduces the old
+                                lattice field's frequency-and-phase-together wavelength coupling —
+                                see fields.py)
   fields.modulated(field, gain)
                                 rescale an already-built field's total output by gain, for when
                                 you don't/can't reach into its profile's own gain parameter
@@ -54,7 +61,7 @@ Fields
 Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into a profile's own
   parameter (or into fields.modulated()); every constructor defaults to its own canonical,
   zero-centered/zero-resting shape rather than one pre-tuned to "neutral at 1" — pass
-  center=1.0 (or mu=1.0, or low/high straddling 1) explicitly for that:
+  center=1.0 (or low/high straddling 1) explicitly for that:
   gains.wavelength_power_law(reference_nm, exponent)
                                 (wavelength / reference_nm) ** exponent, = 1 at reference_nm;
                                 exponent<0 favors short wavelengths (photon momentum p=h/λ), >0
@@ -63,17 +70,19 @@ Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into 
                                 resonance/bandpass bump peaked at reference_nm, decaying to 0
                                 away from it (an absorption/emission lineshape)
   gains.sine_gain(frequency, amplitude, phase, center)
-                                center + amplitude*sin(2*pi*frequency*t + phase); canonical
-                                center=0
+                                center + amplitude*sin(2*pi*(frequency*t + phase)); frequency and
+                                phase are both in cycles (phase=0.25 is a quarter-period shift);
+                                canonical center=0
   gains.square_gain(frequency, amplitude, phase, center)
-                                like sine_gain but +/-1 switching at its zero crossings;
-                                center=amplitude=0.5 for a 0/1 gate
+                                like sine_gain but +/-1, switching at the start of each half-period
+                                (duty-cycle based, not derived from sin); center=amplitude=0.5 for
+                                a 0/1 gate
   gains.gaussian_noise(sigma, center), gains.lognormal_noise(sigma)
                                 i.i.d. per call, no memory; lognormal_noise is always positive
                                 (median 1) — the safer default for a multiplicative gain
-  gains.ornstein_uhlenbeck(theta, sigma, mu)
+  gains.ornstein_uhlenbeck(theta, sigma, center)
                                 stateful mean-reverting random walk (Euler-Maruyama, like
-                                fields.white_noise_field); rests at mu=0 by default
+                                fields.white_noise_field); rests at center=0 by default
   gains.telegraph(rate, low, high)
                                 stateful Poisson-interval switching between low/high (the
                                 stochastic analogue of square_gain)
@@ -102,7 +111,7 @@ Simulation state
                                 raw NumPy arrays, shape (n, dim) / (n, dim) / (n,)
   sim.detector.half_extent     world-space half-width mapped to the detector's pixel grid
   sim.rng                      shared numpy.random.Generator
-  sim.reset(n=None, scale=0.3)
+  sim.reset(n=None, sigma=0.3)
                                 reinitialize the particle population from a fresh Gaussian
                                 cloud (reusing sim.rng and sim.spectrum); recovers a swarm
                                 that has wandered off-screen or gone non-finite (inf/nan)

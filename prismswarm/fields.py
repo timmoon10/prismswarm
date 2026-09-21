@@ -26,9 +26,9 @@ factoring of the common case, not a shape every field must fit:
 
 - A *geometry* (``radial_field``, ``tangential_field``, ``axial_field``)
   turns position into a scalar coordinate plus a direction vector.
-- A *profile* (``constant``, ``linear``, ``exponential``, ``sinusoidal``)
-  is a scalar-to-scalar shape function applied to that coordinate to get
-  a magnitude.
+- A *profile* (``constant``, ``linear``, ``exponential``,
+  ``exponential_ramp``, ``sinusoidal``) is a scalar-to-scalar shape
+  function applied to that coordinate to get a magnitude.
 - A *gain* (``Gain``, see ``gains.py``) is an optional dimensionless
   multiplier, resolved from wavelength/time/randomness, that a profile
   folds into one of its own parameters — never into position, since a
@@ -55,6 +55,7 @@ Profile = Callable[[np.ndarray, np.ndarray, float, float, np.random.Generator], 
 
 _DEFAULT_SOFTENING = 1e-6
 _MAX_EXPONENT = 0.5 * float(np.log(np.finfo(np.float32).max))
+_TWO_PI = 2.0 * np.pi
 
 
 def _unit(v: np.ndarray) -> np.ndarray:
@@ -124,26 +125,65 @@ def exponential(
     gain: Gain | None = None,
     max_exponent: float = _MAX_EXPONENT,
 ) -> Profile:
-    """``amplitude * expm1(min(rate * coordinate, max_exponent))`` (times
-    ``gain``, if given): speed vanishes (``expm1(0) = 0``) at ``coordinate
-    = 0`` and grows exponentially with distance. ``amplitude`` defaults to
-    ``1`` — this profile unscaled, same convention as ``constant`` — with
-    no bias toward either sign: with a ``radial_field`` (whose
-    ``direction`` is outward), a negative ``amplitude`` gives exponential
-    confinement (pulling in, harder the farther out a particle is) and a
-    positive one gives exponential repulsion; see ``constant`` for why
-    neither sign is a special case. A large
-    ``dt`` combined with a coordinate far past ``1 / rate`` can otherwise
-    produce a step large enough to overshoot before the exponential growth
-    brakes it, sending the coordinate even farther out next step — a
-    runaway that reaches ``inf`` in a handful of steps and ``nan`` shortly
-    after. Clamping the exponent to ``max_exponent`` before ``expm1``
+    """``amplitude * exp(min(rate * coordinate, max_exponent))`` (times
+    ``gain``, if given): plain exponential growth, equal to ``amplitude``
+    at ``coordinate = 0`` and growing (or, for negative ``rate``, decaying)
+    exponentially from there — never zero, unlike ``exponential_ramp``
+    below. ``amplitude`` defaults to ``1`` — this profile unscaled, same
+    convention as ``constant`` — with no bias toward either sign: with a
+    ``radial_field`` (whose ``direction`` is outward), a negative
+    ``amplitude`` points inward and a positive one outward; see
+    ``constant`` for why neither sign is a special case.
+
+    A large ``dt`` combined with a coordinate far past ``1 / rate`` can
+    otherwise produce a step large enough to overshoot before the
+    exponential growth brakes it, sending the coordinate even farther out
+    next step — a runaway that reaches ``inf`` in a handful of steps and
+    ``nan`` shortly after. Clamping the exponent to ``max_exponent``
     bounds this profile's own output to a large-but-finite value instead;
     the default, ``ln(float32 max) / 2``, leaves headroom for the
     subsequent multiply by ``amplitude`` and by the geometry's direction
     vector. This doesn't prevent a large step from a *different* field or
     an oversized ``dt`` from still producing a bad step — ``dt`` modest
     relative to ``1 / (rate * amplitude)`` remains good practice.
+    """
+    if gain is None:
+        def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+            return amplitude * np.exp(np.minimum(rate * coordinate, max_exponent))
+
+        return profile
+
+    def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
+        return amplitude * np.exp(np.minimum(rate * coordinate, max_exponent)) * gain(wavelength, t, dt, rng)
+
+    return profile
+
+
+def exponential_ramp(
+    rate: float = 1.0,
+    amplitude: float = 1.0,
+    gain: Gain | None = None,
+    max_exponent: float = _MAX_EXPONENT,
+) -> Profile:
+    """``amplitude * expm1(min(rate * coordinate, max_exponent))`` (times
+    ``gain``, if given): like ``exponential``, but shifted down by
+    ``amplitude`` so it vanishes (``expm1(0) = 0``) at ``coordinate = 0``
+    instead of starting from ``amplitude`` — the exponential analogue of
+    ``linear``, which also passes through the origin, rather than of
+    ``constant``. That matters for a confining ``radial_field``: with
+    plain ``exponential``, a particle sitting exactly at ``center`` still
+    gets pulled at full ``amplitude``, which is a discontinuity-flavored
+    surprise for a field meant to gently confine around that point;
+    ``exponential_ramp`` instead ramps up from zero the farther out a
+    particle sits, only reaching exponential strength once ``coordinate``
+    is well past ``1 / rate``. ``amplitude``'s sign convention (inward vs.
+    outward on a ``radial_field``) matches ``exponential``; see
+    ``constant`` for why neither sign is a special case.
+
+    Shares the ``max_exponent`` overflow clamp and its rationale with
+    ``exponential`` — see that profile's docstring: a large ``dt`` past
+    ``1 / rate`` can otherwise produce a runaway step that reaches ``inf``
+    within a handful of steps.
     """
     if gain is None:
         def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
@@ -165,13 +205,26 @@ def sinusoidal(
     frequency_gain: Gain | None = None,
     phase_gain: Gain | None = None,
 ) -> Profile:
-    """``amplitude * sin(2*pi*frequency*coordinate + phase)``, a single
+    """``amplitude * sin(2*pi*(frequency*coordinate + phase))``, a single
     scalar wave along whatever coordinate the geometry provides — combined
     with ``axial_field``, this is a plane wave with wavevector ``axis``
     (see the README's "Structured fields" section for how this differs
     from the deleted lattice-forming sinusoidal field). Output is
     unconditionally bounded to ``[-amplitude, amplitude]`` regardless of
     how extreme ``frequency``, ``phase``, or any gain get.
+
+    Both ``frequency`` and ``phase`` are in *cycles*, not radians:
+    ``frequency`` is periods per unit coordinate, and ``phase`` is a
+    fractional offset of one period (``phase=0.25`` shifts the wave a
+    quarter-turn), so the two combine by plain addition
+    (``frequency*coordinate + phase``) before the one conversion to
+    radians that ``sin`` needs. This is deliberate, not incidental:
+    radians are canonical for the trig primitive computing the wave, but
+    cycles are canonical for the periodic *quantity* being modulated, and
+    modulating with a ``Gain`` (below) requires that quantity, not the
+    primitive's units — a phase modulator should scale "how much of a
+    period," which only means what it says if ``phase`` is already
+    expressed that way.
 
     Unlike the other profiles, ``sinusoidal`` has three independent scalar
     knobs worth modulating rather than one, so each gets its own named
@@ -181,22 +234,24 @@ def sinusoidal(
     ``phase`` respectively, *before* they enter ``sin`` — the only way a
     modulator can shift *where* the wave's zeros land (e.g. a per-particle
     wavelength setting the lattice spacing), which scaling the output can't
-    reproduce. Passing the *same* ``Gain`` to both ``frequency_gain`` and
-    ``phase_gain`` reproduces the deleted lattice field's behavior (a
-    single wavelength-dependent factor scaling frequency and phase
-    together); passing it to only one modulates that one alone.
+    reproduce. Because both are cycles-valued, the two hooks are on equal
+    footing: passing the *same* ``Gain`` to both reproduces the deleted
+    lattice field's behavior (a single wavelength-dependent factor scaling
+    frequency and phase together); passing it to only one modulates that
+    one alone.
     """
-    two_pi_f = 2.0 * np.pi * frequency
+    omega = _TWO_PI * frequency
+    phase_rad = _TWO_PI * phase
     if amplitude_gain is None and frequency_gain is None and phase_gain is None:
         def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-            return amplitude * np.sin(two_pi_f * coordinate + phase)
+            return amplitude * np.sin(omega * coordinate + phase_rad)
 
         return profile
 
     def profile(coordinate: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator):
-        freq = two_pi_f if frequency_gain is None else two_pi_f * frequency_gain(wavelength, t, dt, rng)
+        freq = frequency if frequency_gain is None else frequency * frequency_gain(wavelength, t, dt, rng)
         ph = phase if phase_gain is None else phase * phase_gain(wavelength, t, dt, rng)
-        out = amplitude * np.sin(freq * coordinate + ph)
+        out = amplitude * np.sin(_TWO_PI * (freq * coordinate + ph))
         return out if amplitude_gain is None else out * amplitude_gain(wavelength, t, dt, rng)
 
     return profile
@@ -227,8 +282,9 @@ def radial_field(
     behavior, negate the profile's scale explicitly, e.g.
     ``radial_field(profile=constant(-1.0))`` (the old ``radial_inward``,
     which no longer has its old center-overshoot artifact here — see the
-    README) or ``radial_field(profile=exponential(amplitude=-1.0))`` — see
-    those profiles' docstrings for why the sign isn't a special case.
+    README) or ``radial_field(profile=exponential_ramp(amplitude=-1.0))``
+    — see those profiles' docstrings for why the sign isn't a special
+    case.
     """
     center_arr = np.asarray(center, dtype=np.float32)
 
@@ -295,12 +351,12 @@ def axial_field(
     profile: Profile = linear(1.0),
     axis: Sequence[float] | None = None,
     direction: Sequence[float] | None = None,
-    anchor: Sequence[float] | None = None,
+    center: Sequence[float] | None = None,
     dim: int = 3,
     rng: np.random.Generator | None = None,
 ) -> Field:
     """``direction * profile(coordinate)`` where ``coordinate = dot(axis,
-    x - anchor)`` and ``direction`` is a fixed unit vector — unlike the
+    x - center)`` and ``direction`` is a fixed unit vector — unlike the
     radial geometries, this direction doesn't depend on position at all,
     so there's no singularity to soften. ``axis`` and ``direction`` are
     independent: leaving ``direction`` unset aligns it to ``axis`` (the
@@ -310,19 +366,23 @@ def axial_field(
     direction while varying with position along another. If ``axis`` isn't
     given, one is drawn from ``rng`` (a fresh unseeded generator if none is
     passed) as a reasonable default direction, using ``dim`` since a
-    position array isn't available yet at construction time.
+    position array isn't available yet at construction time. ``center``
+    names the same reference-point role ``radial_field``/``tangential_field``
+    give that name to — here it's the point the coordinate plane passes
+    through, rather than a point of rotational symmetry, but it's the same
+    kind of knob: where ``coordinate = 0`` is.
     """
     if axis is None:
         axis_arr = _unit((rng or np.random.default_rng()).standard_normal(dim).astype(np.float32))
     else:
         axis_arr = _unit(np.asarray(axis, dtype=np.float32))
     direction_arr = axis_arr if direction is None else _unit(np.asarray(direction, dtype=np.float32))
-    anchor_arr = np.zeros(axis_arr.shape[0], dtype=np.float32) if anchor is None else np.asarray(anchor, dtype=np.float32)
+    center_arr = np.zeros(axis_arr.shape[0], dtype=np.float32) if center is None else np.asarray(center, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        coordinate = (pos - anchor_arr) @ axis_arr
+        coordinate = (pos - center_arr) @ axis_arr
         magnitude = profile(coordinate, wavelength, t, dt, rng)
         return _as_velocity(direction_arr, magnitude, pos.dtype)
 

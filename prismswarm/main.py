@@ -40,13 +40,13 @@ def main(argv: list[str] | None = None) -> None:
     else:
         spectrum = spectra.monochrome(args.wavelength)
 
-    particles = ParticleState.gaussian(n=args.num_particles, rng=rng, spectrum=spectrum, dim=3, scale=0.3)
+    particles = ParticleState.gaussian(n=args.num_particles, rng=rng, spectrum=spectrum, dim=3, sigma=0.3)
 
     field_catalog = {
         "radial": fields.radial_field(profile=fields.constant(-0.3)),
         "white_noise": fields.white_noise_field(sigma=0.05),
         "rotational": fields.tangential_field(profile=fields.linear(1.0)),
-        "confining": fields.radial_field(profile=fields.exponential(rate=1.0, amplitude=-0.3)),
+        "confining": fields.radial_field(profile=fields.exponential_ramp(rate=1.0, amplitude=-0.3)),
         "sinusoidal": fields.axial_field(profile=fields.sinusoidal(), rng=rng),
     }
 

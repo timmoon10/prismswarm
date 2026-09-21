@@ -45,18 +45,18 @@ class Simulation:
         self.state.step(self.active_field, self.t, self.dt, self.rng)
         self.t += self.dt
 
-    def reset(self, n: int | None = None, scale: float = 0.3) -> None:
+    def reset(self, n: int | None = None, sigma: float = 0.3) -> None:
         """Reinitialize the particle population from a fresh Gaussian cloud,
         discarding current positions/velocities/wavelengths. The recovery
         path for a swarm that has wandered far off-screen or gone
-        non-finite (see ``fields.py``'s ``exponential`` profile for one
-        source of that) without restarting the process. Reuses ``rng`` and
-        ``spectrum`` as originally configured; ``n`` defaults to the
+        non-finite (see ``fields.py``'s ``exponential_ramp`` profile for
+        one source of that) without restarting the process. Reuses ``rng``
+        and ``spectrum`` as originally configured; ``n`` defaults to the
         current particle count.
         """
         n = self.state.n if n is None else n
         self.state = ParticleState.gaussian(
-            n=n, rng=self.rng, spectrum=self.spectrum, dim=self.state.dim, scale=scale
+            n=n, rng=self.rng, spectrum=self.spectrum, dim=self.state.dim, sigma=sigma
         )
         self.detector.clear()
         self.t = 0.0

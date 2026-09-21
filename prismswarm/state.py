@@ -31,12 +31,12 @@ class ParticleState:
         rng: np.random.Generator,
         spectrum: Spectrum,
         dim: int = 3,
-        scale: float = 0.3,
+        sigma: float = 0.3,
     ) -> "ParticleState":
         """Particles distributed as an isotropic Gaussian cloud centered on
-        the origin, with per-axis standard deviation ``scale``, and
+        the origin, with per-axis standard deviation ``sigma``, and
         wavelengths drawn from ``spectrum`` (see ``spectra.py``)."""
-        positions = (scale * rng.standard_normal((n, dim))).astype(np.float32)
+        positions = (sigma * rng.standard_normal((n, dim))).astype(np.float32)
         velocities = np.zeros((n, dim), dtype=np.float32)
         wavelengths = spectrum(n, rng).astype(np.float32)
         return cls(positions, velocities, wavelengths)
