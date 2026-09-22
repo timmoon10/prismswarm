@@ -35,8 +35,15 @@ Fields
   fields.tangential_field(profile, center, plane_axes, softening)
                                 direction is tangential within plane_axes (default: view plane);
                                 e.g. fields.tangential_field(profile=fields.linear(1.0)) is rigid rotation
-  fields.axial_field(profile, axis, direction, center, dim, rng)
-                                direction is fixed (defaults to axis); coordinate is dot(axis, x - center)
+  fields.axial_field(profile, *, axis, direction, center)
+                                direction is fixed (defaults to axis); coordinate is dot(axis, x - center).
+                                axis is a required keyword-only arg — no dim to draw a default from here
+                                (fields don't know the simulation's dimensionality); use
+                                sim.random_direction() for a random one sized to sim.state.dim, e.g.
+                                  fields.axial_field(profile=fields.sinusoidal(), axis=sim.random_direction())
+  fields.constant_field(velocity)
+                                uniform drift, ignores position; velocity is required for the same
+                                reason axial_field's axis is — use sim.random_direction() for a random one
   fields.constant(value, gain), fields.linear(slope, gain),
   fields.exponential(rate, amplitude, gain), fields.exponential_ramp(rate, amplitude, gain)
                                 profiles: coordinate -> magnitude. gain (a Gain, see below) scales
@@ -111,7 +118,7 @@ Simulation state
                                 raw NumPy arrays, shape (n, dim) / (n, dim) / (n,)
   sim.detector.half_extent     world-space half-width mapped to the detector's pixel grid
   sim.rng                      shared numpy.random.Generator
-  sim.reset(n=None, sigma=0.3)
+  sim.reset(n=None, dim=None, sigma=0.3)
                                 reinitialize the particle population from a fresh Gaussian
                                 cloud (reusing sim.rng and sim.spectrum); recovers a swarm
                                 that has wandered off-screen or gone non-finite (inf/nan)
@@ -119,6 +126,16 @@ Simulation state
                                 error, its traceback prints to the console and the window
                                 title shows ERROR until state is valid again — sim.reset()
                                 is usually the fix.
+                                dim also changes dimensionality live, e.g. sim.reset(dim=2);
+                                orthographic projection always uses the first two axes, so
+                                positions[:, :2] keeps working at any dim. Fields already in
+                                sim.fields built with an explicit fixed-length axis/center/
+                                velocity for the old dim won't carry over to the new one —
+                                rebuild those for the new dim before switching sim.fields to
+                                them. Fields left at their dimension-agnostic defaults (e.g.
+                                radial_field() with no center) carry over fine.
+  sim.random_direction()       random unit vector sized to sim.state.dim; the explicit axis/
+                                velocity axial_field/constant_field need (see Fields above)
 
 Wavelengths (spectra.py)
   spectra.monochrome(nm), spectra.blackbody(temperature_k)

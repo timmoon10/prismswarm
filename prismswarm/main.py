@@ -16,6 +16,9 @@ from .state import ParticleState
 def build_argparser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="prismswarm — particle light simulation")
     parser.add_argument("-n", "--num-particles", type=int, default=1_000_000)
+    parser.add_argument(
+        "--dim", type=int, default=3, help="particle position dimensionality (>= 2); orthographic projection always takes the first two axes"
+    )
     parser.add_argument("--detector-size", type=int, default=300, help="detector resolution (square, px)")
     parser.add_argument("--display-size", type=int, default=900, help="display window size (square, px)")
     parser.add_argument("--fps", type=int, default=30, help="target frame rate")
@@ -40,26 +43,30 @@ def main(argv: list[str] | None = None) -> None:
     else:
         spectrum = spectra.monochrome(args.wavelength)
 
-    particles = ParticleState.gaussian(n=args.num_particles, rng=rng, spectrum=spectrum, dim=3, sigma=0.3)
+    if args.dim < 2:
+        raise ValueError(f"--dim must be >= 2 (orthographic projection needs at least an xy-plane), got {args.dim}")
 
-    field_catalog = {
-        "radial": fields.radial_field(profile=fields.constant(-0.3)),
-        "white_noise": fields.white_noise_field(sigma=0.05),
-        "rotational": fields.tangential_field(profile=fields.linear(1.0)),
-        "confining": fields.radial_field(profile=fields.exponential_ramp(rate=1.0, amplitude=-0.3)),
-        "sinusoidal": fields.axial_field(profile=fields.sinusoidal(), rng=rng),
-    }
+    particles = ParticleState.gaussian(n=args.num_particles, rng=rng, spectrum=spectrum, dim=args.dim, sigma=0.3)
 
+    # fields={} until after sim exists: axial_field's random default axis is
+    # sized via sim.random_direction(), not a dim param (see fields.py).
     sim = Simulation(
         state=particles,
         detector=Detector(width=args.detector_size, height=args.detector_size, half_extent=1.2),
-        fields=field_catalog,
+        fields={},
         active_field_name="white_noise",
         rng=rng,
         spectrum=spectrum,
         dt=1.0 / args.fps,
         exposure=args.exposure,
     )
+    sim.fields = {
+        "radial": fields.radial_field(profile=fields.constant(-0.3)),
+        "white_noise": fields.white_noise_field(sigma=0.05),
+        "rotational": fields.tangential_field(profile=fields.linear(1.0)),
+        "confining": fields.radial_field(profile=fields.exponential_ramp(rate=1.0, amplitude=-0.3)),
+        "sinusoidal": fields.axial_field(profile=fields.sinusoidal(), axis=sim.random_direction()),
+    }
 
     repl.start(namespace=dict(sim=sim, fields=fields, gains=gains, spectra=spectra, np=np))
 

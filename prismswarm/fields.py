@@ -262,7 +262,7 @@ def sinusoidal(
 
 def radial_field(
     profile: Profile = constant(),
-    center: Sequence[float] = (0.0, 0.0, 0.0),
+    center: Sequence[float] | None = None,
     softening: float = _DEFAULT_SOFTENING,
 ) -> Field:
     """``direction(x) * profile(coordinate(x))`` where ``coordinate`` is
@@ -275,6 +275,11 @@ def radial_field(
     ``direction`` (and so the whole field) smoothly vanish there instead,
     rather than picking an arbitrary direction.
 
+    ``center`` defaults to the origin in whatever dimension ``pos`` turns
+    out to be, resolved per call rather than baked in as a fixed-length
+    vector at construction time — that's what keeps this dimension-agnostic
+    (usable at any ``dim >= 2``, not just R^3) without a ``dim`` parameter.
+
     The bare default, ``profile=constant()``, is the ``direction`` field
     itself unscaled — pure unit-speed outward flow — since that's the
     neutral composition (profile identity, no sign bias) rather than a
@@ -286,12 +291,12 @@ def radial_field(
     — see those profiles' docstrings for why the sign isn't a special
     case.
     """
-    center_arr = np.asarray(center, dtype=np.float32)
+    center_arr = None if center is None else np.asarray(center, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        offset = pos - center_arr
+        offset = pos if center_arr is None else pos - center_arr
         r = np.linalg.norm(offset, axis=-1)
         r_safe = np.sqrt(r**2 + softening**2)
         direction = offset / r_safe[..., None]
@@ -303,7 +308,7 @@ def radial_field(
 
 def tangential_field(
     profile: Profile = linear(1.0),
-    center: Sequence[float] = (0.0, 0.0, 0.0),
+    center: Sequence[float] | None = None,
     plane_axes: tuple[Sequence[float], Sequence[float]] | None = None,
     softening: float = _DEFAULT_SOFTENING,
 ) -> Field:
@@ -314,14 +319,17 @@ def tangential_field(
     ``plane_axes`` (default: the first two coordinate axes, i.e. the
     orthographic view plane); components of ``offset`` outside that plane
     are left untouched, which is what keeps this dimension-agnostic rather
-    than hard-coded to a 3D cross product. ``tangential_field(profile=
-    linear(w))`` reproduces the old ``rotational(angular_velocity=w)``.
+    than hard-coded to a 3D cross product. ``center`` defaults to the
+    origin in whatever dimension ``pos`` turns out to be, resolved per
+    call rather than a fixed-length vector, same reasoning as
+    ``radial_field``. ``tangential_field(profile=linear(w))`` reproduces
+    the old ``rotational(angular_velocity=w)``.
 
     No discretization correction is applied: explicit Euler integration of
     pure circular motion is unconditionally unstable and drifts outward
     over time. Deferred deliberately — see the README roadmap.
     """
-    center_arr = np.asarray(center, dtype=np.float32)
+    center_arr = None if center is None else np.asarray(center, dtype=np.float32)
     fixed_axes = None if plane_axes is None else tuple(_unit(np.asarray(a, dtype=np.float32)) for a in plane_axes)
 
     def field(
@@ -335,7 +343,7 @@ def tangential_field(
             v[1] = 1.0
         else:
             u, v = fixed_axes
-        offset = pos - center_arr
+        offset = pos if center_arr is None else pos - center_arr
         a = offset @ u
         b = offset @ v
         r = np.sqrt(a**2 + b**2)
@@ -349,11 +357,10 @@ def tangential_field(
 
 def axial_field(
     profile: Profile = linear(1.0),
-    axis: Sequence[float] | None = None,
+    *,
+    axis: Sequence[float],
     direction: Sequence[float] | None = None,
     center: Sequence[float] | None = None,
-    dim: int = 3,
-    rng: np.random.Generator | None = None,
 ) -> Field:
     """``direction * profile(coordinate)`` where ``coordinate = dot(axis,
     x - center)`` and ``direction`` is a fixed unit vector — unlike the
@@ -363,19 +370,24 @@ def axial_field(
     common case — e.g. ``axial_field(profile=sinusoidal(...))`` is a plane
     wave traveling along and oscillating along the same line), but setting
     them differently gives a shear flow — velocity pointing along one
-    direction while varying with position along another. If ``axis`` isn't
-    given, one is drawn from ``rng`` (a fresh unseeded generator if none is
-    passed) as a reasonable default direction, using ``dim`` since a
-    position array isn't available yet at construction time. ``center``
-    names the same reference-point role ``radial_field``/``tangential_field``
+    direction while varying with position along another. ``center`` names
+    the same reference-point role ``radial_field``/``tangential_field``
     give that name to — here it's the point the coordinate plane passes
     through, rather than a point of rotational symmetry, but it's the same
     kind of knob: where ``coordinate = 0`` is.
+
+    ``axis`` is a required keyword-only argument, not an optional one with
+    a broken default: unlike ``radial_field``/``tangential_field``'s
+    ``center``, there's no dimension-agnostic default direction to fall
+    back to (a "reasonable random default" needs to know how many
+    components to draw, which needs a dimensionality this constructor
+    otherwise has no reason to know — fields aren't meant to carry that
+    context themselves; the running ``Simulation`` already does, via
+    ``sim.state.dim``). Use ``sim.random_direction()`` for a random unit
+    vector sized to the simulation's current dimensionality, e.g.
+    ``fields.axial_field(profile=fields.sinusoidal(), axis=sim.random_direction())``.
     """
-    if axis is None:
-        axis_arr = _unit((rng or np.random.default_rng()).standard_normal(dim).astype(np.float32))
-    else:
-        axis_arr = _unit(np.asarray(axis, dtype=np.float32))
+    axis_arr = _unit(np.asarray(axis, dtype=np.float32))
     direction_arr = axis_arr if direction is None else _unit(np.asarray(direction, dtype=np.float32))
     center_arr = np.zeros(axis_arr.shape[0], dtype=np.float32) if center is None else np.asarray(center, dtype=np.float32)
 
@@ -392,15 +404,15 @@ def axial_field(
 # --- Standalone fields (no meaningful position dependence) -----------------
 
 
-def constant_field(velocity: Sequence[float] | None = None, dim: int = 3, rng: np.random.Generator | None = None) -> Field:
-    """A uniform drift: every particle gets the same fixed velocity every
-    step, regardless of position. If ``velocity`` isn't given, one is
-    drawn from ``rng`` (a fresh unseeded generator if none is passed).
+def constant_field(velocity: Sequence[float]) -> Field:
+    """A uniform drift: every particle gets the same fixed ``velocity``
+    every step, regardless of position. ``velocity`` is required for the
+    same reason ``axial_field``'s ``axis`` is (see its docstring) — no
+    dimensionality to draw a default from here; use
+    ``sim.random_direction()`` for a random one sized to the simulation's
+    current dimensionality, e.g. ``fields.constant_field(sim.random_direction())``.
     """
-    if velocity is None:
-        velocity_arr = (rng or np.random.default_rng()).standard_normal(dim).astype(np.float32)
-    else:
-        velocity_arr = np.asarray(velocity, dtype=np.float32)
+    velocity_arr = np.asarray(velocity, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator

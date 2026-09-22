@@ -14,8 +14,17 @@ along the way.
 ### Particle state
 
 Each particle carries a position, a velocity, and an emission wavelength.
-Positions currently live in R^3; the state representation is kept general
-enough to extend to higher dimensions (see Roadmap).
+Positions live in R^dim for any `dim >= 2` (3 by default, set via
+`main.py --dim`) — not just R^3. Every geometry, profile, and gain in
+`fields.py`/`gains.py` operates on whatever dimensionality `pos` carries at
+call time rather than assuming 3, and orthographic projection (`positions[:,
+:2]`) always takes the first two axes regardless of `dim`, so a `dim > 3`
+scene is a genuine higher-dimensional simulation projected down to the 2D
+detector, not a special case. The one thing that does hard-code a
+dimension is `tangential_field`'s rotation plane when `plane_axes` isn't
+given explicitly (defaults to the first two coordinate axes) — a
+consequence of "tangential" needing a 2D plane to rotate within, not a
+limitation on `dim` itself.
 
 ### Velocity fields
 
@@ -65,11 +74,21 @@ projections on the roadmap won't decompose this way and will implement
   vector: radial distance from a center with the outward direction,
   tangential distance/direction within a rotation plane, or a linear
   projection onto an axis with a fixed direction. `radial_field` and
-  `tangential_field` accept an arbitrary `center`; `axial_field` an
-  arbitrary `axis` and (optionally) a separate `direction` — none of these
-  default to or assume the coordinate axes, so a linear field pushing along
-  one direction while varying with position along a *different* one (a
-  shear flow) is a first-class case, not a special one.
+  `tangential_field` accept an arbitrary `center` (default: the origin, in
+  whatever dimension `pos` turns out to be at call time — resolved lazily
+  rather than baked in, which is what makes these usable at any `dim >= 2`
+  with no `dim` parameter of their own); `axial_field` an arbitrary `axis`
+  and (optionally) a separate `direction` — none of these default to or
+  assume the coordinate axes, so a linear field pushing along one direction
+  while varying with position along a *different* one (a shear flow) is a
+  first-class case, not a special one. Unlike `center`, `axis` has no
+  dimension-agnostic default to fall back to — a "reasonable random
+  direction" needs to know how many components to draw, and that's the
+  running `Simulation`'s job (`sim.random_direction()`, sized to
+  `sim.state.dim`), not this constructor's; `axial_field` requires `axis`
+  explicitly rather than accepting a `dim` to draw one itself, since a
+  field constructor has no business knowing which simulation it'll run in.
+  `constant_field`'s `velocity` is required for the same reason.
 - A **profile** (`constant`, `linear`, `exponential`, `exponential_ramp`,
   `sinusoidal`) is a plain scalar→scalar shape function applied to the
   coordinate, giving the field's magnitude. Every profile's scale
@@ -481,7 +500,6 @@ influence the rest of the system).
 - pybind11 native extension as a fallback if Numba proves insufficient
 
 **Future extensions (not scheduled)**
-- Higher-dimensional particle space (4D/8D projected down to R^2)
 - Pinhole camera projection with distance-based brightness falloff
   (`d^(1-n)` is natural for a pinhole model; the orthographic falloff law,
   if any, is TBD)
