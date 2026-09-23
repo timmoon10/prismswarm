@@ -60,11 +60,13 @@ shape every field must fit. Perlin noise and the Hopf-fibration
 projections on the roadmap won't decompose this way and will implement
 `Field` directly when they land):
 
-- A **geometry** factory (`radial_field`, `tangential_field`, `axial_field`)
-  turns position into a scalar *coordinate* and a unit-ish *direction*
-  vector: radial distance from a center with the outward direction,
-  tangential distance/direction within a rotation plane, or a linear
-  projection onto an axis with a fixed direction. `radial_field` and
+- A **geometry** factory (`radial_field`, `tangential_field`, `axial_field`,
+  `twist_field`) turns position into a scalar *coordinate* and a unit-ish
+  *direction* vector: radial distance from a center with the outward
+  direction, tangential distance/direction within a rotation plane, a
+  linear projection onto an axis with a fixed direction, or (`twist_field`)
+  a linear projection onto an axis with a direction that itself rotates
+  within a separate plane as that projection grows — see below. `radial_field` and
   `tangential_field` accept an arbitrary `center` (default: the origin, in
   whatever dimension `pos` turns out to be at call time — resolved lazily
   rather than baked in, which is what makes these usable at any `dim >= 2`
@@ -171,6 +173,40 @@ all the way to `r = 0` would instead produce a permanent period-2
 overshoot bounce at `center`. `tangential_field`'s outward-spiral drift
 under explicit Euler is unrelated to this and still applies — see the
 Roadmap.
+
+`twist_field(axis, plane_axes, angle, magnitude, center)` is a fourth
+geometry with a different shape from the other three: direction rotates
+within `plane_axes` as a function of position along `axis`, but is
+constant across the whole plane itself — unlike `tangential_field`,
+velocity has no dependence on position *within* the rotation plane at
+all. This is the cholesteric liquid-crystal director field, and (frozen
+at one instant) the spatial helix a circularly- or elliptically-polarized
+plane wave's field vector traces along its propagation axis — a real
+structure, not an invented one, with `axis` as the propagation direction
+and each wavelength free to twist at its own rate (chromatic optical
+activity/circular birefringence, achieved by giving `angle` its own
+`gain`) rather than a fixed one. It reuses `Profile` for two independent
+roles instead of one, the same reason `sinusoidal` needed three named
+gain hooks instead of a single `gain`: `angle` is interpreted as *cycles*
+(exactly like `sinusoidal`'s `frequency`/`phase`) and sets the rotation
+rate — `angle=linear(rate)` (the default, `rate=1`) is the canonical
+constant-pitch helix; a nonlinear `angle` (e.g. `sinusoidal(...)`) gives
+an accelerating or oscillating twist instead, a principled but
+non-physical extension of the base case. `magnitude` is an ordinary
+profile-as-magnitude, the amplitude envelope along `axis` (`constant()`
+by default). `axis` has no dimension-agnostic default, for the same
+reason `axial_field`'s doesn't: in 3D the orthogonal complement of a
+2-plane is a unique line, but for `dim > 3` it's `(dim - 2)`-dimensional,
+so there's no canonical "the other axis" past 3D. `plane_axes` defaults
+to the first two coordinate axes, like `tangential_field`'s default.
+Correctness of a custom `axis`/`plane_axes` pairing — they should be
+mutually orthogonal, or `coordinate` and in-plane position stop being
+independent — is the caller's responsibility, same convention as
+`tangential_field`'s custom `plane_axes` and `axial_field`'s
+`axis`/`direction`; this makes `dim >= 3` a practical requirement, though
+nothing checks it explicitly. No singularity to soften here, unlike the
+radial geometries: direction never depends on `offset` within the plane,
+so there's no `0/0` at any point.
 
 `modulated(field, gain)` is the complementary, coarser tool: it rescales an
 *already-built* field's total output by a gain, for when you want to tune
@@ -365,7 +401,7 @@ export) doesn't stretch the image.
 Module layout:
 
 - `prismswarm/fields.py` — the `Field` interface; geometry factories
-  (`radial_field`, `tangential_field`, `axial_field`) and profiles
+  (`radial_field`, `tangential_field`, `axial_field`, `twist_field`) and profiles
   (`constant`, `linear`, `exponential`, `exponential_ramp`, `sinusoidal`)
   that combine into structured fields; `modulated` for `Gain`-based
   modulation of a whole field; the standalone `constant_field` and
@@ -499,6 +535,11 @@ influence the rest of the system).
   sines, geometrically distinct from `axial_field`'s single-wavevector
   plane wave) was deleted rather than kept alongside the new system — a
   deliberate prototype, not a regression.
+- Added `twist_field` (see "Structured fields" above): a fourth geometry
+  whose direction rotates within a plane as a function of position along
+  a separate axis, rather than depending on in-plane position like
+  `tangential_field` — the cholesteric liquid-crystal director field /
+  the spatial helix a frozen circularly-polarized wave traces.
 - Still to add: Perlin noise, rectilinear, stereographic projections of
   Hopf fibers
 - Exercise field composition (addition) now that multiple fields exist

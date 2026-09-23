@@ -24,8 +24,9 @@ fields: geometry × profile × gain" section for the design rationale. None
 of the three is required to build a ``Field``; they're a convenient
 factoring of the common case, not a shape every field must fit:
 
-- A *geometry* (``radial_field``, ``tangential_field``, ``axial_field``)
-  turns position into a scalar coordinate plus a direction vector.
+- A *geometry* (``radial_field``, ``tangential_field``, ``axial_field``,
+  ``twist_field``) turns position into a scalar coordinate plus a
+  direction vector.
 - A *profile* (``constant``, ``linear``, ``exponential``,
   ``exponential_ramp``, ``sinusoidal``) is a scalar-to-scalar shape
   function applied to that coordinate to get a magnitude.
@@ -392,6 +393,89 @@ def axial_field(
         coordinate = (pos - center_arr) @ axis_arr
         magnitude = profile(coordinate, wavelength, t, dt, rng)
         return _as_velocity(direction_arr, magnitude, pos.dtype)
+
+    return field
+
+
+def twist_field(
+    axis: Sequence[float],
+    plane_axes: tuple[Sequence[float], Sequence[float]] | None = None,
+    angle: Profile = linear(1.0),
+    magnitude: Profile = constant(1.0),
+    center: Sequence[float] | None = None,
+) -> Field:
+    """Direction rotates within a fixed plane as a function of position
+    along ``axis``, while staying constant across the whole plane spanned
+    by ``plane_axes`` — velocity has no dependence on in-plane position at
+    all, unlike ``tangential_field``, where direction depends on where you
+    sit *within* the rotation plane. ``direction(coordinate) =
+    cos(theta)*u + sin(theta)*v`` where ``theta = 2*pi*angle(coordinate)``
+    and ``coordinate = dot(offset, axis)`` — exactly ``axial_field``'s
+    coordinate. No singularity to soften: unlike the radial geometries,
+    direction never depends on ``offset`` within the plane, so there's no
+    ``0/0`` at any point.
+
+    This is the cholesteric liquid-crystal director field / the spatial
+    snapshot of a circularly-or-elliptically-polarized plane wave: freeze
+    a circularly polarized EM wave at one instant and its field vector
+    traces exactly this helix along the propagation axis, with ``axis`` as
+    the propagation direction, ``angle``'s rate as the wavenumber, and
+    each wavelength free to have its own twist rate — chromatic optical
+    activity / circular birefringence is a real, wavelength-dependent
+    effect, achieved here by giving ``angle`` its own ``gain`` (e.g.
+    ``linear(rate, gain=wavelength_power_law())``), not an invented one.
+
+    Reuses ``Profile`` for two independent scalar roles instead of one:
+    ``angle`` (interpreted as *cycles*, exactly like ``sinusoidal``'s
+    ``frequency``/``phase``, converted to radians once here) sets the
+    rotation rate — ``angle=linear(rate)`` (the default, ``rate=1``) is
+    the canonical constant-pitch helix, one full twist per unit
+    ``coordinate``; a nonlinear ``angle`` (e.g. ``sinusoidal(...)``) gives
+    an accelerating or oscillating twist instead of a fixed pitch, a
+    principled but non-physical extension of the base case above.
+    ``magnitude`` (interpreted as an ordinary magnitude, like every other
+    geometry's ``profile``) is the amplitude envelope along ``axis`` —
+    ``constant()`` (the default) is a uniform helix;
+    ``exponential_ramp(amplitude=-1.0)`` would give one that decays away
+    from ``center``. Both accept the full ``Profile``/``Gain`` machinery
+    independently, including wavelength coupling through either.
+
+    ``axis`` has no dimension-agnostic default, for the same reason
+    ``axial_field``'s doesn't (see its docstring): in 3D the orthogonal
+    complement of a 2-plane is a unique line, but for ``dim > 3`` it's
+    ``(dim - 2)``-dimensional, so there's no canonical "the other axis" to
+    fall back to past 3D. ``plane_axes`` defaults to the first two
+    coordinate axes (dimension-agnostic, like ``tangential_field``'s
+    default), resolved from ``axis``'s own length at construction time
+    since ``axis`` already fixes the dimension. Correctness of a custom
+    ``axis``/``plane_axes`` pairing — they should be mutually orthogonal,
+    or ``coordinate`` and in-plane position stop being independent and
+    "constant across the plane" no longer holds — is the caller's
+    responsibility, the same convention as ``tangential_field``'s custom
+    ``plane_axes`` and ``axial_field``'s ``axis``/``direction``. Requires
+    ``dim >= 3`` in practice (one dimension for ``axis``, two more for the
+    plane); nothing here checks that explicitly, consistent with the rest
+    of this module.
+    """
+    axis_arr = _unit(np.asarray(axis, dtype=np.float32))
+    dim = axis_arr.shape[0]
+    if plane_axes is None:
+        u = np.zeros(dim, dtype=np.float32)
+        u[0] = 1.0
+        v = np.zeros(dim, dtype=np.float32)
+        v[1] = 1.0
+    else:
+        u, v = (_unit(np.asarray(a, dtype=np.float32)) for a in plane_axes)
+    center_arr = np.zeros(dim, dtype=np.float32) if center is None else np.asarray(center, dtype=np.float32)
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        coordinate = (pos - center_arr) @ axis_arr
+        theta = _TWO_PI * angle(coordinate, wavelength, t, dt, rng)
+        direction = np.cos(theta)[..., None] * u + np.sin(theta)[..., None] * v
+        mag = magnitude(coordinate, wavelength, t, dt, rng)
+        return _as_velocity(direction, mag, pos.dtype)
 
     return field
 
