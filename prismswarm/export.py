@@ -50,9 +50,16 @@ def record(
     instead, so a higher ``fps`` also means finer-grained (more accurate)
     integration, not just a smoother video — ``sim.dt`` itself is never
     touched. ``width``/``height`` default to ``sim.detector``'s
-    resolution; pass larger ones for a higher-resolution export rendered
-    directly at that resolution (not upscaled after the fact), without
-    touching the live detector.
+    resolution; pass larger ones (any aspect ratio — the recording's
+    ``Detector`` derives its world half-height from the pixel aspect
+    ratio, so it won't stretch the image, see ``detector.py``) for a
+    higher-resolution export rendered directly at that resolution (not
+    upscaled after the fact), without touching the live detector.
+
+    Runs synchronously on whichever thread calls it — called from the
+    REPL, as intended, the prompt is unresponsive for the whole recording
+    (progress still prints); Ctrl-C interrupts cleanly, since the
+    ``finally`` below still closes and waits on the ffmpeg subprocess.
 
     Safe to call from the REPL's background thread while the render loop
     is live on the main thread: this never steps, splats into, or

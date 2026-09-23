@@ -58,9 +58,8 @@ Fields
                                 Has three knobs, so each gets its own named hook instead of one
                                 ambiguous gain: amplitude_gain scales the output like the others do;
                                 frequency_gain/phase_gain scale their (cycles-valued) parameter
-                                before it enters sin (the same Gain in both reproduces the old
-                                lattice field's frequency-and-phase-together wavelength coupling —
-                                see fields.py)
+                                before it enters sin (the same Gain in both scales frequency and
+                                phase together, as one wavelength-dependent factor)
   fields.modulated(field, gain)
                                 rescale an already-built field's total output by gain, for when
                                 you don't/can't reach into its profile's own gain parameter
@@ -149,8 +148,10 @@ Video export (needs the ffmpeg binary on PATH — not a pip dependency)
                                 duration_s wall-clock seconds; the output always plays back at
                                 duration_s seconds. fps defaults to round(1/sim.dt) (one frame
                                 per sim step); width/height default to sim.detector's
-                                resolution — pass larger ones to export at higher resolution
-                                without touching the live detector.
+                                resolution — pass larger ones (any aspect ratio) to export at
+                                higher resolution without touching the live detector. Runs
+                                synchronously: the REPL prompt is unresponsive until it's done
+                                (progress still prints); Ctrl-C interrupts cleanly.
 
 Wavelengths (spectra.py)
   spectra.monochrome(nm), spectra.blackbody(temperature_k)

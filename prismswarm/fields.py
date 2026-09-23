@@ -207,11 +207,9 @@ def sinusoidal(
 ) -> Profile:
     """``amplitude * sin(2*pi*(frequency*coordinate + phase))``, a single
     scalar wave along whatever coordinate the geometry provides — combined
-    with ``axial_field``, this is a plane wave with wavevector ``axis``
-    (see the README's "Structured fields" section for how this differs
-    from the deleted lattice-forming sinusoidal field). Output is
-    unconditionally bounded to ``[-amplitude, amplitude]`` regardless of
-    how extreme ``frequency``, ``phase``, or any gain get.
+    with ``axial_field``, this is a plane wave with wavevector ``axis``.
+    Output is unconditionally bounded to ``[-amplitude, amplitude]``
+    regardless of how extreme ``frequency``, ``phase``, or any gain get.
 
     Both ``frequency`` and ``phase`` are in *cycles*, not radians:
     ``frequency`` is periods per unit coordinate, and ``phase`` is a
@@ -235,10 +233,9 @@ def sinusoidal(
     modulator can shift *where* the wave's zeros land (e.g. a per-particle
     wavelength setting the lattice spacing), which scaling the output can't
     reproduce. Because both are cycles-valued, the two hooks are on equal
-    footing: passing the *same* ``Gain`` to both reproduces the deleted
-    lattice field's behavior (a single wavelength-dependent factor scaling
-    frequency and phase together); passing it to only one modulates that
-    one alone.
+    footing: passing the *same* ``Gain`` to both scales frequency and phase
+    together, as one wavelength-dependent factor; passing it to only one
+    modulates that one alone.
     """
     omega = _TWO_PI * frequency
     phase_rad = _TWO_PI * phase
@@ -285,11 +282,9 @@ def radial_field(
     neutral composition (profile identity, no sign bias) rather than a
     choice tuned to any particular intended use. For inward/confining
     behavior, negate the profile's scale explicitly, e.g.
-    ``radial_field(profile=constant(-1.0))`` (the old ``radial_inward``,
-    which no longer has its old center-overshoot artifact here — see the
-    README) or ``radial_field(profile=exponential_ramp(amplitude=-1.0))``
-    — see those profiles' docstrings for why the sign isn't a special
-    case.
+    ``radial_field(profile=constant(-1.0))`` or
+    ``radial_field(profile=exponential_ramp(amplitude=-1.0))`` — see those
+    profiles' docstrings for why the sign isn't a special case.
     """
     center_arr = None if center is None else np.asarray(center, dtype=np.float32)
 
@@ -322,8 +317,8 @@ def tangential_field(
     than hard-coded to a 3D cross product. ``center`` defaults to the
     origin in whatever dimension ``pos`` turns out to be, resolved per
     call rather than a fixed-length vector, same reasoning as
-    ``radial_field``. ``tangential_field(profile=linear(w))`` reproduces
-    the old ``rotational(angular_velocity=w)``.
+    ``radial_field``. ``tangential_field(profile=linear(w))`` is
+    rigid-body rotation at angular velocity ``w``.
 
     No discretization correction is applied: explicit Euler integration of
     pure circular motion is unconditionally unstable and drifts outward
@@ -376,11 +371,11 @@ def axial_field(
     through, rather than a point of rotational symmetry, but it's the same
     kind of knob: where ``coordinate = 0`` is.
 
-    ``axis`` is a required keyword-only argument, not an optional one with
-    a broken default: unlike ``radial_field``/``tangential_field``'s
-    ``center``, there's no dimension-agnostic default direction to fall
-    back to (a "reasonable random default" needs to know how many
-    components to draw, which needs a dimensionality this constructor
+    ``axis`` is a required keyword-only argument: unlike
+    ``radial_field``/``tangential_field``'s ``center``, there's no
+    dimension-agnostic default direction to fall back to (a "reasonable
+    random default" needs to know how many components to draw, which
+    needs a dimensionality this constructor
     otherwise has no reason to know — fields aren't meant to carry that
     context themselves; the running ``Simulation`` already does, via
     ``sim.state.dim``). Use ``sim.random_direction()`` for a random unit

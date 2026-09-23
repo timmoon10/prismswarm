@@ -41,6 +41,8 @@ def _asymmetric_gaussian(wavelength: np.ndarray, mu: float, sigma_lo: float, sig
 
 def wavelength_to_xyz(wavelength_nm: np.ndarray) -> np.ndarray:
     """Map wavelengths (nm) to CIE XYZ tristimulus values, shape ``(..., 3)``."""
+    # float64 to match Detector.buffer's accumulator precision (see detector.py);
+    # the rest of the pipeline stays float32.
     w = np.asarray(wavelength_nm, dtype=np.float64)
     channels = []
     for terms in (_X_TERMS, _Y_TERMS, _Z_TERMS):

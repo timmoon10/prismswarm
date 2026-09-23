@@ -35,37 +35,28 @@ kinematic: like a fluid flow field advecting passive tracers, they
 prescribe velocity directly rather than exerting a force that builds up
 over time. Fields compose by addition — combining two fields is just
 summing their prescribed velocities, with no special-casing required in
-the integrator. A deterministic field (e.g. radial-inward) ignores `rng`;
+the integrator. A deterministic field (e.g. `radial_field`) ignores `rng`;
 a stochastic field (e.g. white noise) ignores position; a
 wavelength-independent field ignores `wavelengths` — every field shipped
 so far does exactly that, so wavelength coupling is strictly opt-in, never
 implicit. `dt` is passed through explicitly so stochastic fields can
 discretize correctly (see below).
 
-Initial fields: a radially-inward uniform field, and `white_noise_field`
-(velocity drawn fresh each step as i.i.d. Gaussian noise — white noise at
-the velocity level). `white_noise_field` is an Euler–Maruyama
-discretization: integrating white-noise velocity produces Brownian motion
-in position, where the Wiener process gives a position increment `dx = σ *
-sqrt(dt) * randn()` per step, so the field returns `v = σ / sqrt(dt) *
-randn()` — velocity that grows unboundedly as `dt -> 0`, reflecting the
-non-differentiability of Brownian paths — so that the integrator's `x += v
-* dt` recovers the correct increment. Although the interface supports
-summing fields, the first validation experiments run them independently,
-alternating between the two to check the visualization pipeline in
-isolation before exercising composition.
+`white_noise_field` (velocity drawn fresh each step as i.i.d. Gaussian
+noise) is the one field outside the geometry × profile × gain system
+below — see its docstring in `fields.py` for its Euler–Maruyama
+discretization. The rest of the catalog is covered in "Structured fields"
+next.
 
 ### Structured fields: geometry × profile × gain
 
-The field catalog (`radial_inward`, `rotational`, `exponential_confinement`,
-the old lattice-forming `sinusoidal`, and the ad hoc `wavelength_coupled`
-wrapper) was a set of one-off constructors named after the *use case* they
-were built for, each re-deriving its own direction/magnitude/singularity
-handling. It's been replaced with a small, general system built from three
-independent pieces, none of which is required to construct a `Field` (the
-raw `Field` callable — `(pos, vel, wavelength, t, dt, rng) -> velocity` —
-is still the actual interface; this is one convenient way to build one, not
-a shape every field must fit. Perlin noise and the Hopf-fibration
+The field catalog is built from a small, general system of three
+independent pieces, rather than one-off constructors each re-deriving
+their own direction/magnitude/singularity handling for a specific use
+case. None of the three is required to construct a `Field` (the raw
+`Field` callable — `(pos, vel, wavelength, t, dt, rng) -> velocity` — is
+still the actual interface; this is one convenient way to build one, not a
+shape every field must fit. Perlin noise and the Hopf-fibration
 projections on the roadmap won't decompose this way and will implement
 `Field` directly when they land):
 
@@ -108,14 +99,15 @@ projections on the roadmap won't decompose this way and will implement
   (or decays) from there, never crossing zero; `exponential_ramp` is
   shifted down by `amplitude` so it vanishes at `coordinate = 0` instead —
   the exponential analogue of `linear` (which also passes through the
-  origin) rather than of `constant`. Concretely: `radial_field(profile=
-  constant(-1.0))` is the old `radial_inward`; `radial_field(profile=
-  exponential_ramp(amplitude=-1.0))` is the old `exponential_confinement`
-  (its center-anchored zero is what made it suitable for confinement in
-  the first place — plain `exponential` would instead pull at full
-  `amplitude` on a particle sitting exactly at `center`); `tangential_field
-  (profile=linear(w))` is the old `rotational`; `axial_field(profile=
-  sinusoidal(...))` is a single-wavevector plane wave.
+  origin) rather than of `constant`. For example: `radial_field(profile=
+  constant(-1.0))` is inward confinement at constant speed;
+  `radial_field(profile=exponential_ramp(amplitude=-1.0))` is exponential
+  confinement — its center-anchored zero is what makes it suitable for
+  confinement in the first place, since plain `exponential` would instead
+  pull at full `amplitude` on a particle sitting exactly at `center`;
+  `tangential_field(profile=linear(w))` is rigid-body rotation at angular
+  velocity `w`; `axial_field(profile=sinusoidal(...))` is a
+  single-wavevector plane wave.
 - A **gain** (`Gain = Callable[[wavelength, t, dt, rng], array | float]`,
   defined in `gains.py`) is an optional dimensionless multiplier a profile
   can fold into one of its own parameters. Deliberately excluded from
@@ -142,9 +134,9 @@ quarter-period shift), so the two combine by plain addition before the
 one conversion to radians `sin` needs, and `frequency_gain`/`phase_gain`
 scale genuinely equivalent, same-unit quantities rather than one already-
 converted value and one not. Passing the same `Gain` to both
-`frequency_gain` and `phase_gain` reproduces the deleted lattice field's
-single wavelength-dependent factor scaling frequency and phase together;
-passing it to only one modulates that one alone. Each profile factory
+`frequency_gain` and `phase_gain` scales frequency and phase together, as
+one wavelength-dependent factor; passing it to only one modulates that
+one alone. Each profile factory
 resolves its gain parameters once, at construction time, into a closure
 with no gain-related branching or array allocation when none are given;
 the "no modulation" case costs exactly what it did before this system
@@ -172,13 +164,11 @@ and `tangential_field` fix this by normalizing direction against
 coordinate handed to `profile` as the true, unsoftened distance. The
 softened direction's own magnitude smoothly shrinks to `0` exactly at
 `center` (rather than being clamped to a unit vector all the way in), so
-`radial_field(profile=constant(-1.0))` — the old `radial_inward` — no
-longer has a non-decaying speed near the center: velocity is `direction *
-profile`, and `direction -> 0` there regardless of what `profile` returns.
-That eliminates the permanent period-2 overshoot bounce this field used to
-have at `center` (a direct consequence of the direction magnitude no
-longer being pinned to `1` all the way to `r = 0`, not something that
-needed separate verification). `tangential_field`'s outward-spiral drift
+`radial_field(profile=constant(-1.0))` has no non-decaying speed near the
+center: velocity is `direction * profile`, and `direction -> 0` there
+regardless of what `profile` returns — a direction magnitude pinned to `1`
+all the way to `r = 0` would instead produce a permanent period-2
+overshoot bounce at `center`. `tangential_field`'s outward-spiral drift
 under explicit Euler is unrelated to this and still applies — see the
 Roadmap.
 
@@ -212,9 +202,8 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   fundamental basis. `wavelength_gaussian(reference_nm, sigma_nm,
   amplitude)` — a resonance/bandpass bump, the standard lineshape for a
   single absorption/emission resonance (the mechanism that gives colored
-  glass its color). Previously deferred here pending a multiplicative
-  composition rule for stacking resonances — see `gain_product` below,
-  which supplies exactly that.
+  glass its color); combine multiple via `gain_product` (below) to stack
+  resonances.
 - **Temporal, deterministic** (t only): `sine_gain(frequency, amplitude,
   phase, center)` and `square_gain(frequency, amplitude, phase, center)`
   — a smooth oscillation and a hard 50%-duty switch between two levels,
@@ -253,10 +242,8 @@ Every constructor defaults to its own mathematically canonical shape —
 `sine_gain`/`square_gain` zero-centered, `ornstein_uhlenbeck` resting at
 `center=0`, `telegraph` switching around `0` — rather than one pre-tuned
 to "neutral at 1", which is a property of *using* a gain multiplicatively,
-not of the shape itself; an earlier draft defaulted `sine_gain` to
-`center=1` and it read as backward-engineered from the gain use case
-rather than a canonical atom. Pass `center=1.0` (or `low`/`high`
-straddling `1`) explicitly to get that. `lognormal_noise` and
+not of the shape itself. Pass `center=1.0` (or `low`/`high` straddling
+`1`) explicitly to get that. `lognormal_noise` and
 `wavelength_power_law` are the exceptions: their neutral-at-1 behavior is
 a structural consequence of their formulas (exponentiating a zero-mean
 Gaussian; evaluating a power law at its own reference point), not a tuned
@@ -317,6 +304,12 @@ fine detector grid downsampled to a small window, without touching the
 physics or the color pipeline. Detector→display resizing is purely a
 presentation-layer concern.
 
+`Detector`'s `half_extent` is the world-space half-*width* it covers; the
+half-*height* is derived from it via the pixel aspect ratio
+(`height / width`) rather than reused directly for both axes, so pixels
+are always square — a non-square detector (e.g. a 16:9 `sim.record()`
+export) doesn't stretch the image.
+
 ### Photon → color pipeline
 
 1. Each particle's wavelength maps to an XYZ tristimulus contribution via
@@ -360,7 +353,7 @@ presentation-layer concern.
 
 ## Software architecture
 
-Proposed module layout:
+Module layout:
 
 - `prismswarm/fields.py` — the `Field` interface; geometry factories
   (`radial_field`, `tangential_field`, `axial_field`) and profiles
@@ -455,8 +448,8 @@ pybind11 extension is the fallback if Numba turns out to be insufficient.
 
 **M1 — Core loop (done)**
 - Particle state in R^3, Euler integration
-- Radial-inward and white-noise fields, independently selectable at runtime
-  (not summed yet)
+- `radial_field` and `white_noise_field`, independently selectable at
+  runtime
 - Orthographic projection; detector buffer decoupled from display
   resolution
 - CIE XYZ→sRGB pipeline with gamut mapping and manual + adaptive
