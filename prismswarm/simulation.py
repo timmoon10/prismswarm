@@ -16,6 +16,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from . import export
 from .detector import Detector
 from .fields import Field
 from .spectra import Spectrum
@@ -89,3 +90,20 @@ class Simulation:
         self.state = ParticleState.gaussian(n=n, rng=self.rng, spectrum=self.spectrum, dim=dim, sigma=sigma)
         self.detector.clear()
         self.t = 0.0
+
+    def record(
+        self,
+        duration_s: float,
+        path: str,
+        fps: float | None = None,
+        width: int | None = None,
+        height: int | None = None,
+        progress: bool = True,
+    ) -> None:
+        """Render ``duration_s`` seconds of simulated time to an MP4 at
+        ``path``, starting from a snapshot of the current state/field/rng —
+        see ``export.record`` for the full docstring, including why this is
+        safe to call from the REPL thread while the render loop is live on
+        the main thread (it never steps or mutates ``self`` directly).
+        """
+        export.record(self, duration_s, path, fps=fps, width=width, height=height, progress=progress)

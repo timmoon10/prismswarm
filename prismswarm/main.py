@@ -7,7 +7,7 @@ import argparse
 
 import numpy as np
 
-from . import fields, gains, render, repl, spectra
+from . import export, fields, gains, render, repl, spectra
 from .detector import Detector
 from .simulation import Simulation
 from .state import ParticleState
@@ -68,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
         "sinusoidal": fields.axial_field(profile=fields.sinusoidal(), axis=sim.random_direction()),
     }
 
-    repl.start(namespace=dict(sim=sim, fields=fields, gains=gains, spectra=spectra, np=np))
+    repl.start(namespace=dict(sim=sim, fields=fields, gains=gains, spectra=spectra, export=export, np=np))
 
     render.run(sim, display_size=(args.display_size, args.display_size), target_fps=args.fps)
 

@@ -137,6 +137,21 @@ Simulation state
   sim.random_direction()       random unit vector sized to sim.state.dim; the explicit axis/
                                 velocity axial_field/constant_field need (see Fields above)
 
+Video export (needs the ffmpeg binary on PATH — not a pip dependency)
+  sim.record(duration_s, path, fps=None, width=None, height=None, progress=True)
+                                render duration_s seconds of simulated time to an MP4 at path,
+                                e.g. sim.record(10.0, "swarm.mp4"). Runs on an independent
+                                clone of the current state/rng/detector, not the live sim — it
+                                never steps or mutates sim itself, so it's safe to call from
+                                here while the render loop keeps running on the main thread.
+                                Frames render as fast as this thread can compute them (no
+                                real-time throttling), so capture can take more or less than
+                                duration_s wall-clock seconds; the output always plays back at
+                                duration_s seconds. fps defaults to round(1/sim.dt) (one frame
+                                per sim step); width/height default to sim.detector's
+                                resolution — pass larger ones to export at higher resolution
+                                without touching the live detector.
+
 Wavelengths (spectra.py)
   spectra.monochrome(nm), spectra.blackbody(temperature_k)
                                 Spectrum factories: spectrum(n, rng) -> wavelengths_nm.

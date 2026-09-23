@@ -413,6 +413,17 @@ Proposed module layout:
   interactive editing while the sim runs. Owns the REPL's usage guidance
   (banner + `sim_help()`) — skips starting itself if stdin isn't a real
   terminal, rather than spinning on repeated EOF.
+- `prismswarm/export.py` — `record(sim, duration_s, path, ...)` (exposed
+  as `sim.record(...)`) renders a run to an MP4 by piping raw RGB24 frames
+  to the `ffmpeg` binary (required on `PATH`; not a pip dependency, so not
+  in `pyproject.toml`). Explicitly does not step `sim` itself — see
+  "Threading model" below for why — instead cloning `sim.state` (a plain
+  array copy), spawning an independent child of `sim.rng`
+  (`Generator.spawn()`, so it can't race draws the live render loop makes
+  against the same shared generator), and building its own `Detector`,
+  then stepping that clone as fast as the calling thread can compute,
+  uncoupled from real-time. `sim.fields`/`sim.spectrum` are read-only
+  callables, shared directly with no cloning needed.
 - `prismswarm/main.py` — entry point wiring the above together and holding
   the initial scene setup.
 
@@ -423,7 +434,14 @@ thread and mutates shared state — e.g. swapping the active field list —
 through simple reference/list reassignment rather than fine-grained
 locking, relying on the GIL for atomicity of those individual ops. This
 keeps the REPL responsive without stalling the render loop, and vice
-versa.
+versa. That model covers single attribute reads/writes, not a tight loop
+of calls — which is exactly what recording a video needs, since it must
+call `state.step()` and `detector.splat()` many times in a row. Since the
+REPL is where `sim.record()` is meant to be called from, and the render
+loop is concurrently doing exactly that same kind of tight-loop stepping
+on `sim` itself, `export.record()` never touches the live `sim.state` /
+`sim.detector` / `sim.rng` at all — it works from clones, by construction
+outside this model's guarantees rather than straining them.
 
 **Numeric approach:** NumPy (float32), vectorized over the whole particle
 array for field evaluation and integration — no per-particle Python loop.
