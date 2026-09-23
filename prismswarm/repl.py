@@ -83,6 +83,9 @@ Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into 
                                 like sine_gain but +/-1, switching at the start of each half-period
                                 (duty-cycle based, not derived from sin); center=amplitude=0.5 for
                                 a 0/1 gate
+  gains.linear_gain(rate, center)
+                                center + rate*t; unbounded linear growth (or decay, rate<0) with
+                                simulation time; canonical center=0
   gains.gaussian_noise(sigma, center), gains.lognormal_noise(sigma)
                                 i.i.d. per call, no memory; lognormal_noise is always positive
                                 (median 1) — the safer default for a multiplicative gain
@@ -95,6 +98,9 @@ Gains (gains.py) — Gain = (wavelength, t, dt, rng) -> multiplier, folded into 
   gains.gain_product(*gains)
                                 combine gains by multiplying their outputs, e.g. a field
                                 that's both wavelength- and time-modulated
+  gains.gain_sum(*gains)
+                                combine gains by adding their outputs, e.g. a linear_gain
+                                trend plus a sine_gain oscillation around it
 
   Example: fields.radial_field(profile=fields.constant(-0.6,
     gain=gains.gain_product(gains.wavelength_power_law(exponent=-1.0),

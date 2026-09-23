@@ -12,8 +12,9 @@ stateless gain just ignores it, the same "ignore what you don't need"
 convention every field/profile already follows.
 
 Every gain here defaults to its own mathematically canonical form —
-`sine_gain`/`square_gain` zero-centered, `ornstein_uhlenbeck`/`telegraph`
-resting at/switching around `0`, `wavelength_gaussian` peaking at
+`sine_gain`/`square_gain`/`linear_gain` zero-centered,
+`ornstein_uhlenbeck`/`telegraph` resting at/switching around `0`,
+`wavelength_gaussian` peaking at
 `amplitude` and decaying to `0` — rather than one pre-tuned to "neutral at
 1", which is a property of *using* a gain multiplicatively, not a property
 of the shape itself. Pass `center=1.0` (or `low`/`high` straddling `1`)
@@ -24,13 +25,17 @@ consequence of exponentiating a zero-mean Gaussian, so it needs no
 exactly `1` at its reference wavelength by construction, for the same
 reason — see its docstring.
 
-Multiple gains combine via `gain_product`, multiplying their outputs —
-the natural composition rule for dimensionless multipliers (matching
-Beer-Lambert absorption, where stacked absorbers multiply transmittances),
-and how a profile's single gain slot can be driven by more than one
-independent effect at once (e.g. `gain_product(wavelength_power_law(),
+Multiple gains combine via `gain_product` (multiplying their outputs —
+the natural composition rule for dimensionless multipliers, matching
+Beer-Lambert absorption where stacked absorbers multiply transmittances)
+or `gain_sum` (adding their outputs — for independent additive signals
+rather than multiplicative factors, e.g. a trend plus an oscillation).
+Either lets a profile's single gain slot be driven by more than one
+independent effect at once, e.g. `gain_product(wavelength_power_law(),
 sine_gain(frequency=0.5, center=1.0))` for a field that's both
-wavelength- and time-modulated).
+wavelength- and time-modulated, or `gain_sum(linear_gain(rate=0.1,
+center=1.0), sine_gain(frequency=0.5, amplitude=0.2))` for a gain that
+trends upward while oscillating around that trend.
 
 Stateful gains (`ornstein_uhlenbeck`, `telegraph`) hold their state in a
 closure, which only works correctly if each call corresponds to a distinct
@@ -176,6 +181,23 @@ def square_gain(frequency: float, amplitude: float = 1.0, phase: float = 0.0, ce
     return gain
 
 
+def linear_gain(rate: float = 1.0, center: float = 0.0) -> Gain:
+    """``center + rate * t`` — grows (or, for negative ``rate``, decays)
+    linearly and unboundedly with simulation time, matching
+    ``fields.linear``'s ``slope * coordinate`` but with ``t`` as the
+    coordinate. Zero-centered by default, matching ``sine_gain``/
+    ``square_gain``'s convention; pass ``center=1.0`` to start at a gain's
+    neutral value and grow from there. Unlike ``fields.exponential``,
+    there's no overflow to guard against here — linear growth can't blow
+    up the way repeated exponentiation can — so this needs no clamp.
+    """
+
+    def gain(wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator) -> float:
+        return center + rate * t
+
+    return gain
+
+
 # --- Stochastic, memoryless: rng only -------------------------------------
 
 
@@ -295,6 +317,26 @@ def gain_product(*gains: Gain) -> Gain:
         result: "np.ndarray | float" = 1.0
         for g in gains:
             result = result * g(wavelength, t, dt, rng)
+        return result
+
+    return gain
+
+
+def gain_sum(*gains: Gain) -> Gain:
+    """Combine multiple gains into one by adding their outputs — the
+    composition rule for gains that represent independent additive
+    signals rather than independent multiplicative factors (``gain_product``
+    is that case): e.g. ``gain_sum(linear_gain(rate=0.1, center=1.0),
+    sine_gain(frequency=0.5, amplitude=0.2))`` for a gain that trends
+    linearly upward while oscillating around that trend. A gain of ``0``
+    (the additive identity) is a no-op under this sum, in contrast to
+    ``gain_product``'s identity of ``1``.
+    """
+
+    def gain(wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator) -> "np.ndarray | float":
+        result: "np.ndarray | float" = 0.0
+        for g in gains:
+            result = result + g(wavelength, t, dt, rng)
         return result
 
     return gain

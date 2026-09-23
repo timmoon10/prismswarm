@@ -215,7 +215,11 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   definition, not an angle, so radians would be a borrowed unit rather
   than the natural one. `square_gain` is computed directly from the
   fractional part of `frequency*t + phase`, not from the sign of `sin`, so
-  it has no dependency on trigonometry at all.
+  it has no dependency on trigonometry at all. `linear_gain(rate, center)`
+  — `center + rate*t`, matching `fields.linear`'s `slope * coordinate`
+  with `t` as the coordinate — grows (or, for negative `rate`, decays)
+  unboundedly; unlike `fields.exponential`, there's no overflow risk to
+  clamp against.
 - **Stochastic, memoryless** (rng only): `gaussian_noise(sigma, center)`
   and `lognormal_noise(sigma)` — i.i.d. per call, no state. `lognormal_noise`
   (`exp(sigma * randn())`) is the canonical choice for a multiplicative
@@ -239,8 +243,9 @@ t, rng — a gain actually reads, which also predicts what it's good for:
   of a fixed period, the standard model for e.g. ion channel gating.
 
 Every constructor defaults to its own mathematically canonical shape —
-`sine_gain`/`square_gain` zero-centered, `ornstein_uhlenbeck` resting at
-`center=0`, `telegraph` switching around `0` — rather than one pre-tuned
+`sine_gain`/`square_gain`/`linear_gain` zero-centered,
+`ornstein_uhlenbeck` resting at `center=0`, `telegraph` switching around
+`0` — rather than one pre-tuned
 to "neutral at 1", which is a property of *using* a gain multiplicatively,
 not of the shape itself. Pass `center=1.0` (or `low`/`high` straddling
 `1`) explicitly to get that. `lognormal_noise` and
@@ -249,14 +254,18 @@ a structural consequence of their formulas (exponentiating a zero-mean
 Gaussian; evaluating a power law at its own reference point), not a tuned
 default, so neither needs a `center` parameter.
 
-Multiple gains combine via `gain_product(*gains)`, multiplying their
-outputs — the natural composition rule for dimensionless multipliers
-(matching Beer-Lambert absorption, where stacked absorbers multiply
-transmittances), and distinct from the addition `sum_fields` uses to
-compose `Field`s. This is what lets a profile's single gain slot be driven
-by more than one independent effect, e.g.
+Multiple gains combine via `gain_product(*gains)` (multiplying their
+outputs — the natural composition rule for dimensionless multipliers,
+matching Beer-Lambert absorption where stacked absorbers multiply
+transmittances) or `gain_sum(*gains)` (adding their outputs — for
+independent additive signals rather than multiplicative factors, the same
+rule `sum_fields` uses to compose `Field`s). Either lets a profile's
+single gain slot be driven by more than one independent effect, e.g.
 `gain_product(wavelength_power_law(), sine_gain(frequency=0.5,
-center=1.0))` for a field that's both wavelength- and time-modulated. A
+center=1.0))` for a field that's both wavelength- and time-modulated, or
+`gain_sum(linear_gain(rate=0.1, center=1.0), sine_gain(frequency=0.5,
+amplitude=0.2))` for a gain that trends upward while oscillating around
+that trend. A
 generic pair of "lift" combinators (an affine `center + scale * signal`
 and a multiplicative `exp(scale * signal)`) were considered as a way to
 build every centered/rescaled variant from one canonical zero-centered
