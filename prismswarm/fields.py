@@ -558,6 +558,71 @@ def white_noise_field(sigma: float = 1.0, gain: Gain | None = None) -> Field:
     return field
 
 
+def hopf_r3_field(speed: float = 1.0, gain: Gain | None = None) -> Field:
+    """The classical "linked circles" picture: the unit-speed Hopf flow on
+    S^3 (see the README's "Structured fields" section — the same flow
+    ``sum_fields(tangential_field(profile=linear(w), plane_axes=(e0, e1)),
+    tangential_field(profile=linear(w), plane_axes=(e2, e3)))`` generates
+    natively, and generalizes to any even ``dim``), pushed forward through
+    stereographic projection into a genuine field on R^3. Unlike that
+    native construction, this one is dimension-*locked*: it's a specific,
+    famous artifact of one arbitrary choice of projection pole and complex
+    structure on S^3, not a canonical structure in its own right — kept
+    here as the celebrity case, separate from the dimension-general one.
+
+    Acts on the first three components of ``pos`` only (``pos[..., :3]``)
+    regardless of ``dim``; any further axes get zero velocity, the same
+    "lives in a subspace" behavior ``twist_field``'s transverse plane has.
+    Requires ``dim >= 3``.
+
+    Derivation: represent a point on S^3 as two complex coordinates
+    ``z0 = x0 + i*x1``, ``z1 = x2 + i*x3``; the Hopf flow is simultaneous
+    equal-rate rotation ``(z0, z1) -> (e^{i*theta}*z0, e^{i*theta}*z1)``,
+    and stereographic projection from the pole ``(1, 0, 0, 0)`` is
+    ``pi(x0, x1, x2, x3) = (x1, x2, x3) / (1 - x0)``. Differentiating
+    ``pi`` applied to the flow at ``theta = 0``, with ``(x0, x1, x2, x3)``
+    the inverse stereographic image of ``y = pos[..., :3]``, the
+    projection's denominator cancels completely — the result is a
+    division-free polynomial in ``y``:
+
+        v(y) = ((y2^2 + y3^2 - y1^2 - 1) / 2, -y1*y2 - y3, y2 - y1*y3)
+
+    ``v`` is smooth and never zero on all of R^3 (setting every component
+    to 0 forces ``y1^2 = -1``), so unlike the radial geometries this needs
+    no softening — normalizing ``v`` to unit length is always well-defined
+    everywhere, giving the requested unit-magnitude field outright. The
+    asymmetry between ``y1`` and ``(y2, y3)`` isn't a bug: it's the
+    fingerprint of the arbitrary pole/complex-structure choice above, and
+    it's what makes one fiber (the one through the projection pole) map to
+    a straight line along the ``y1``-axis while every other fiber becomes
+    a circle linking it — the recognizable core of the classic picture.
+
+    ``speed`` and ``gain`` scale the field's one remaining scalar knob —
+    overall speed along the fibers — exactly like ``white_noise_field``'s
+    ``sigma``/``gain`` do; they never touch the direction, which is fixed
+    by the geometry above.
+    """
+
+    def field(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        y1, y2, y3 = pos[..., 0], pos[..., 1], pos[..., 2]
+        v1 = 0.5 * (y2**2 + y3**2 - y1**2 - 1.0)
+        v2 = -y1 * y2 - y3
+        v3 = y2 - y1 * y3
+        direction = np.stack((v1, v2, v3), axis=-1)
+        direction = direction / np.linalg.norm(direction, axis=-1, keepdims=True)
+        magnitude = speed if gain is None else speed * gain(wavelength, t, dt, rng)
+        velocity3 = _as_velocity(direction, magnitude, pos.dtype)
+        if pos.shape[-1] == 3:
+            return velocity3
+        velocity = np.zeros_like(pos)
+        velocity[..., :3] = velocity3
+        return velocity
+
+    return field
+
+
 # --- Composition -------------------------------------------------------
 
 

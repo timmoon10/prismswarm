@@ -226,6 +226,41 @@ nothing checks it explicitly. No singularity to soften here, unlike the
 radial geometries: direction never depends on `offset` within the plane,
 so there's no `0/0` at any point.
 
+**General rotation generators, and the Hopf fibration, come for free by
+composition.** `tangential_field(profile=linear(w))`'s output on its own
+plane is exactly `w` times a 90-degree rotation of the in-plane offset,
+untouched outside that plane — so summing several instances over disjoint
+orthogonal `plane_axes` (via `sum_fields`) reconstructs the action of a
+general block-diagonal rotation generator (an element of `so(dim)`) on
+the full position vector, with no new geometry needed: `sum_fields`'s
+addition *is* the matrix's block-diagonal addition. Giving every plane
+the *same* rate is the isoclinic/Clifford case; on any even `dim`,
+pairing up all `dim / 2` axes at one shared rate generates the general
+unitary Hopf fibration `S^(dim-1) -> CP^(dim/2 - 1)` natively in whatever
+dimension the sim is running at — the classical `S^3 -> S^2` Hopf
+fibration (`dim = 4`) is just its smallest case, e.g.
+`sum_fields(tangential_field(profile=linear(w), plane_axes=(e0, e1)),
+tangential_field(profile=linear(w), plane_axes=(e2, e3)))`. No
+stereographic projection or subspace-limiting hack is needed for this —
+particles trace genuine Hopf fibers at whatever radius they sit, and the
+existing orthographic (first-two-axes) projection displays it like
+anything else in this project. `twist_field` composes the same way for
+the same reason (its direction is likewise confined to its own plane):
+summing several instances sharing one `axis` over disjoint orthogonal
+`plane_axes`, with each plane's `magnitude` weight `w_i` satisfying
+`sum(w_i^2) = 1`, keeps the combined direction unit-length — equal
+`angle` rates trace one (diagonally embedded, still one-dimensional)
+great circle, while different rates trace a genuinely higher-dimensional
+torus/braid.
+
+The literal "linked circles" picture most people mean by "the Hopf
+fibration" is a different, dimension-*locked* thing: the stereographic
+projection of the S^3 flow above into a field on R^3 specifically — see
+`fields.hopf_r3_field` for that one. It's kept separate from the
+dimension-general construction above deliberately: it's a specific,
+famous artifact of one arbitrary choice of projection pole, not a
+canonical structure to generalize from.
+
 `modulated(field, gain)` is the complementary, coarser tool: it rescales an
 *already-built* field's total output by a gain, for when you want to tune
 wavelength/time dependence from outside without reaching into a profile's
@@ -422,8 +457,9 @@ Module layout:
   (`radial_field`, `tangential_field`, `axial_field`, `twist_field`) and profiles
   (`constant`, `linear`, `exponential`, `exponential_ramp`, `sinusoidal`)
   that combine into structured fields; `modulated` for `Gain`-based
-  modulation of a whole field; the standalone `constant_field` and
-  `white_noise_field`; and the additive composition helper (`sum_fields`).
+  modulation of a whole field; the standalone `constant_field`,
+  `white_noise_field`, and `hopf_r3_field`; and the additive composition
+  helper (`sum_fields`).
   See "Structured fields: geometry ×
   profile × gain" above.
 - `prismswarm/gains.py` — the `Gain` type and its constructor catalog
@@ -558,8 +594,14 @@ influence the rest of the system).
   a separate axis, rather than depending on in-plane position like
   `tangential_field` — the cholesteric liquid-crystal director field /
   the spatial helix a frozen circularly-polarized wave traces.
-- Still to add: Perlin noise, rectilinear, stereographic projections of
-  Hopf fibers
+- Added the Hopf fibration, in two forms (see "Structured fields" above):
+  the dimension-general isoclinic rotation flow — free by composing
+  `sum_fields` over disjoint orthogonal `tangential_field` planes at
+  equal rate, generalizing to `S^(dim-1) -> CP^(dim/2 - 1)` on any even
+  `dim` — and `hopf_r3_field`, the famous stereographically-projected
+  "linked circles" picture, dimension-locked to R^3 and kept separate as
+  the celebrity case rather than blended into the canonical one.
+- Still to add: Perlin noise, rectilinear projections
 - Exercise field composition (addition) now that multiple fields exist
 - Discretization correction for `tangential_field` to prevent outward
   spiraling: explicit Euler applied to pure circular motion is
