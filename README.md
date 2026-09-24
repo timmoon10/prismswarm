@@ -269,6 +269,27 @@ a field you didn't construct yourself. It consumes the same `Gain` type as
 every profile's gain parameter, so any constructor from the gain catalog
 below works identically in either place.
 
+`normalized(field, softening)` rescales an already-built field's output to
+unit magnitude at every point (softened the same way `radial_field`'s
+direction is, so it vanishes rather than dividing by zero exactly where
+`field` itself is zero). Rescaling a vector field by a positive scalar
+function of position never changes its integral curves as geometric
+paths — a standard ODE fact — only the speed they're traced at, so
+`normalized()` keeps a field's orbits identical while making that speed
+uniform everywhere. This is what turns the rigid-body rotation generators
+above into genuinely unit-speed ones: `normalized(sum_fields(...))` over
+the same disjoint orthogonal `tangential_field` planes preserves their
+orbits exactly (including, in the equal-rate case, the Hopf fibers
+themselves), while fixing rigid rotation's `speed = w * r` into a
+constant particles move at everywhere in frame, rather than crawling
+near the origin and shooting through the edges. It has to wrap the whole
+sum, not each plane individually: swapping each `tangential_field`'s
+`profile` for `constant(...)` instead would make each plane's own
+*angular* rate position-dependent (`speed / r_i`), which breaks the fixed
+relative phase rate between planes that makes the sum's orbits Hopf
+fibers in the first place, whereas normalizing the combined output
+leaves every plane's relative phase rate untouched.
+
 ### Gain catalog
 
 `gains.py` holds the `Gain` type and its constructors, kept separate from
@@ -457,9 +478,9 @@ Module layout:
   (`radial_field`, `tangential_field`, `axial_field`, `twist_field`) and profiles
   (`constant`, `linear`, `exponential`, `exponential_ramp`, `sinusoidal`)
   that combine into structured fields; `modulated` for `Gain`-based
-  modulation of a whole field; the standalone `constant_field`,
-  `white_noise_field`, and `hopf_r3_field`; and the additive composition
-  helper (`sum_fields`).
+  modulation of a whole field and `normalized` for rescaling one to unit
+  magnitude; the standalone `constant_field`, `white_noise_field`, and
+  `hopf_r3_field`; and the additive composition helper (`sum_fields`).
   See "Structured fields: geometry ×
   profile × gain" above.
 - `prismswarm/gains.py` — the `Gain` type and its constructor catalog

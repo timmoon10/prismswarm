@@ -658,3 +658,48 @@ def modulated(field: Field, gain: Gain) -> Field:
         return _as_velocity(base, gain(wavelength, t, dt, rng), pos.dtype)
 
     return coupled
+
+
+def normalized(field: Field, softening: float = _DEFAULT_SOFTENING) -> Field:
+    """Rescale an already-built field's output to unit magnitude at every
+    point, dividing by ``sqrt(|v|^2 + softening^2)`` rather than ``|v|`` —
+    the same softening convention ``radial_field``/``tangential_field`` use
+    for their own direction vectors — so this smoothly vanishes wherever
+    ``field`` itself is exactly zero, rather than producing a ``0/0``
+    there, instead of assuming ``field`` is nonvanishing everywhere.
+
+    Rescaling a vector field by a positive scalar function of position
+    never changes its integral curves as geometric paths, only the speed
+    at which they're traced — a standard fact about autonomous ODEs — so
+    ``normalized(field)`` keeps exactly the same orbits ``field`` has,
+    just at unit speed. This matters whenever a field's magnitude carries
+    no information you want to keep: e.g. the general rotation-generator
+    fields built from summing ``tangential_field`` instances over disjoint
+    orthogonal planes (see the README's "Structured fields" section) are
+    rigid-body rotations, with speed growing linearly with distance from
+    the origin — normalizing them to unit speed keeps their orbits
+    (including, for the equal-rate/isoclinic case, genuine Hopf fibers)
+    identical while making particles move at the same rate everywhere in
+    frame, rather than crawling near the origin and shooting through the
+    edges of the visible region.
+
+    This has to normalize the *combined* output, not each summand before
+    summing: for a sum of several ``tangential_field`` instances,
+    swapping each one's ``profile`` for ``constant(...)`` (unit speed
+    within that one plane alone) changes each plane's own *angular* rate
+    to be position-dependent (``speed / r_i`` instead of a fixed
+    ``slope``), which breaks the fixed relative phase rate between planes
+    that made the summed field's orbits into Hopf fibers in the first
+    place. Wrapping the whole sum in ``normalized()`` instead leaves
+    every plane's relative phase rate untouched — only the combined
+    field's overall speed changes — so the orbits are preserved exactly.
+    """
+
+    def wrapped(
+        pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
+    ) -> np.ndarray:
+        v = field(pos, vel, wavelength, t, dt, rng)
+        norm = np.sqrt(np.sum(v**2, axis=-1) + softening**2)
+        return (v / norm[..., None]).astype(pos.dtype)
+
+    return wrapped
