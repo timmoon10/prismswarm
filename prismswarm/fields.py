@@ -402,18 +402,48 @@ def twist_field(
     plane_axes: tuple[Sequence[float], Sequence[float]] | None = None,
     angle: Profile = linear(1.0),
     magnitude: Profile = constant(1.0),
-    center: Sequence[float] | None = None,
+    phase: float = 0.0,
+    phase_gain: Gain | None = None,
 ) -> Field:
     """Direction rotates within a fixed plane as a function of position
     along ``axis``, while staying constant across the whole plane spanned
     by ``plane_axes`` — velocity has no dependence on in-plane position at
     all, unlike ``tangential_field``, where direction depends on where you
     sit *within* the rotation plane. ``direction(coordinate) =
-    cos(theta)*u + sin(theta)*v`` where ``theta = 2*pi*angle(coordinate)``
-    and ``coordinate = dot(offset, axis)`` — exactly ``axial_field``'s
-    coordinate. No singularity to soften: unlike the radial geometries,
-    direction never depends on ``offset`` within the plane, so there's no
-    ``0/0`` at any point.
+    cos(theta)*u + sin(theta)*v`` where ``theta = 2*pi*(angle(coordinate) +
+    phase)`` and ``coordinate = dot(pos, axis)`` — exactly ``axial_field``'s
+    coordinate, but measured from the true origin: unlike the other
+    geometries, ``twist_field`` takes no ``center``. A ``center`` here
+    would shift ``coordinate``, but its only real effect would be on
+    ``theta`` (for the default ``angle=linear(rate)``, shifting
+    ``coordinate`` by ``d`` is exactly ``theta += 2*pi*rate*d`` — the same
+    thing ``phase`` does directly), and its component *orthogonal* to
+    ``axis`` would do nothing at all, same latent oddity ``axial_field``'s
+    own ``center`` has. ``phase`` (in cycles, same convention as
+    ``sinusoidal``'s) says the same thing plainly — "what direction the
+    field points at the origin" — without a mostly-inert vector parameter.
+    It belongs to the geometry rather than to ``angle`` because ``angle``
+    can be any ``Profile``, and most (``linear``, ``exponential``, ...)
+    have no additive/intercept term of their own to serve this role, while
+    an offset is always meaningful once ``angle``'s output becomes a
+    rotation. ``phase_gain``, if given, scales ``phase`` exactly like
+    ``sinusoidal``'s ``phase_gain`` scales its own ``phase`` — a
+    multiplicative factor on the same cycles-valued quantity, so it needs
+    a nonzero ``phase`` baseline to have any visible effect, the same
+    caveat every other profile's ``gain`` has against a zero-valued
+    parameter. This is what lets the field's starting orientation itself
+    be wavelength- or time-dependent, e.g. a time-varying ``phase`` (via
+    ``sine_gain`` or ``ornstein_uhlenbeck``) for a helix that appears to
+    spin about its own axis, layered on top of ``angle``'s own,
+    independent wavelength coupling. The one capability this gives up:
+    ``magnitude``'s envelope
+    is always anchored at the true origin along ``axis``, with no way to
+    shift where e.g. an ``exponential_ramp`` envelope centers — a niche
+    enough need, given ``magnitude`` defaults to ``constant()``, that it's
+    not worth reintroducing ``center`` for; fold an offset into a custom
+    ``magnitude`` profile if it's ever needed. No singularity to soften:
+    unlike the radial geometries, direction never depends on ``offset``
+    within the plane, so there's no ``0/0`` at any point.
 
     This is the cholesteric liquid-crystal director field / the spatial
     snapshot of a circularly-or-elliptically-polarized plane wave: freeze
@@ -427,17 +457,16 @@ def twist_field(
 
     Reuses ``Profile`` for two independent scalar roles instead of one:
     ``angle`` (interpreted as *cycles*, exactly like ``sinusoidal``'s
-    ``frequency``/``phase``, converted to radians once here) sets the
-    rotation rate — ``angle=linear(rate)`` (the default, ``rate=1``) is
-    the canonical constant-pitch helix, one full twist per unit
-    ``coordinate``; a nonlinear ``angle`` (e.g. ``sinusoidal(...)``) gives
-    an accelerating or oscillating twist instead of a fixed pitch, a
-    principled but non-physical extension of the base case above.
-    ``magnitude`` (interpreted as an ordinary magnitude, like every other
-    geometry's ``profile``) is the amplitude envelope along ``axis`` —
-    ``constant()`` (the default) is a uniform helix;
-    ``exponential_ramp(amplitude=-1.0)`` would give one that decays away
-    from ``center``. Both accept the full ``Profile``/``Gain`` machinery
+    ``frequency``/``phase``, converted to radians once here, after adding
+    ``phase``) sets the rotation rate — ``angle=linear(rate)`` (the
+    default, ``rate=1``) is the canonical constant-pitch helix, one full
+    twist per unit ``coordinate``; a nonlinear ``angle`` (e.g.
+    ``sinusoidal(...)``) gives an accelerating or oscillating twist
+    instead of a fixed pitch, a principled but non-physical extension of
+    the base case above. ``magnitude`` (interpreted as an ordinary
+    magnitude, like every other geometry's ``profile``) is the amplitude
+    envelope along ``axis`` — ``constant()`` (the default) is a uniform
+    helix. Both accept the full ``Profile``/``Gain`` machinery
     independently, including wavelength coupling through either.
 
     ``axis`` has no dimension-agnostic default, for the same reason
@@ -466,13 +495,13 @@ def twist_field(
         v[1] = 1.0
     else:
         u, v = (_unit(np.asarray(a, dtype=np.float32)) for a in plane_axes)
-    center_arr = np.zeros(dim, dtype=np.float32) if center is None else np.asarray(center, dtype=np.float32)
 
     def field(
         pos: np.ndarray, vel: np.ndarray, wavelength: np.ndarray, t: float, dt: float, rng: np.random.Generator
     ) -> np.ndarray:
-        coordinate = (pos - center_arr) @ axis_arr
-        theta = _TWO_PI * angle(coordinate, wavelength, t, dt, rng)
+        coordinate = pos @ axis_arr
+        ph = phase if phase_gain is None else phase * phase_gain(wavelength, t, dt, rng)
+        theta = _TWO_PI * (angle(coordinate, wavelength, t, dt, rng) + ph)
         direction = np.cos(theta)[..., None] * u + np.sin(theta)[..., None] * v
         mag = magnitude(coordinate, wavelength, t, dt, rng)
         return _as_velocity(direction, mag, pos.dtype)

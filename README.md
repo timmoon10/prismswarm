@@ -174,7 +174,7 @@ overshoot bounce at `center`. `tangential_field`'s outward-spiral drift
 under explicit Euler is unrelated to this and still applies — see the
 Roadmap.
 
-`twist_field(axis, plane_axes, angle, magnitude, center)` is a fourth
+`twist_field(axis, plane_axes, angle, magnitude, phase)` is a fourth
 geometry with a different shape from the other three: direction rotates
 within `plane_axes` as a function of position along `axis`, but is
 constant across the whole plane itself — unlike `tangential_field`,
@@ -194,16 +194,34 @@ constant-pitch helix; a nonlinear `angle` (e.g. `sinusoidal(...)`) gives
 an accelerating or oscillating twist instead, a principled but
 non-physical extension of the base case. `magnitude` is an ordinary
 profile-as-magnitude, the amplitude envelope along `axis` (`constant()`
-by default). `axis` has no dimension-agnostic default, for the same
-reason `axial_field`'s doesn't: in 3D the orthogonal complement of a
-2-plane is a unique line, but for `dim > 3` it's `(dim - 2)`-dimensional,
-so there's no canonical "the other axis" past 3D. `plane_axes` defaults
-to the first two coordinate axes, like `tangential_field`'s default.
-Correctness of a custom `axis`/`plane_axes` pairing — they should be
-mutually orthogonal, or `coordinate` and in-plane position stop being
-independent — is the caller's responsibility, same convention as
-`tangential_field`'s custom `plane_axes` and `axial_field`'s
-`axis`/`direction`; this makes `dim >= 3` a practical requirement, though
+by default). Unlike the other three geometries, `twist_field` takes no
+`center` — a spatial center's only meaningful effect here would be on
+`theta`, and for the default linear `angle` that's exactly what `phase`
+(in cycles, `sinusoidal`'s convention) already does directly, while
+`center`'s component orthogonal to `axis` would silently do nothing at
+all (the same latent oddity `axial_field`'s own `center` has, just
+starker here); `phase` says "what direction the field points at the
+origin" without a mostly-inert vector parameter. `phase_gain`, mirroring
+`sinusoidal`'s own `phase_gain`, scales `phase` multiplicatively (so it
+needs a nonzero `phase` baseline to do anything, like every profile's
+`gain` against a zero-valued parameter) — a time-varying `phase_gain`
+(`sine_gain`, `ornstein_uhlenbeck`) spins the whole helix pattern about
+its own axis over time, independent of any wavelength coupling on
+`angle` itself. The one cost of dropping `center`: no longer being able
+to shift where `magnitude`'s envelope is anchored — a niche
+enough need, given `magnitude` defaults to `constant()`, that it's better
+folded into a custom `magnitude` profile if it's ever needed than
+reintroduced as a geometry-level parameter. `axis` has no
+dimension-agnostic default, for the same reason `axial_field`'s doesn't:
+in 3D the orthogonal complement of a 2-plane is a unique line, but for
+`dim > 3` it's `(dim - 2)`-dimensional, so there's no canonical "the
+other axis" past 3D. `plane_axes` defaults to the first two coordinate
+axes, like `tangential_field`'s default. Correctness of a custom
+`axis`/`plane_axes` pairing — they should be mutually orthogonal, or
+`coordinate` and in-plane position stop being independent — is the
+caller's responsibility, same convention as `tangential_field`'s custom
+`plane_axes` and `axial_field`'s `axis`/`direction`; this makes `dim >=
+3` a practical requirement, though
 nothing checks it explicitly. No singularity to soften here, unlike the
 radial geometries: direction never depends on `offset` within the plane,
 so there's no `0/0` at any point.
